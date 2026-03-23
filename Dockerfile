@@ -1,37 +1,26 @@
 # ============================================
 # App image — uses pre-built base image
-# Fast builds — only rebuilds when code changes
+# Strategy: start from the official release tarball (complete, pre-compiled)
+# then overlay our customizations (config, skin, SSO plugin)
 # ============================================
 ARG BASE_IMAGE=avuz-roundcube-base:latest
 FROM ${BASE_IMAGE}
 
+ARG RC_VERSION=1.6.14
+
 WORKDIR /var/www/roundcube
 
-# Copy Roundcube source
-COPY --chown=www-data:www-data . /var/www/roundcube/
-
-# Install Composer dependencies
-# Roundcube ships composer.json-dist — copy it before running install
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-RUN cp composer.json-dist composer.json \
-  && composer install --no-dev --optimize-autoloader --no-scripts \
-  && rm -rf /root/.composer
-
-# Pull pre-compiled CSS and JS from the official release tarball.
-# The git repo only has LESS/source files; compiled assets are release-only.
-ARG RC_VERSION=1.6.14
+# Download the official release tarball — fully compiled, no build step needed
 RUN curl -sL "https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/roundcubemail-${RC_VERSION}-complete.tar.gz" \
     -o /tmp/rc-release.tar.gz \
   && tar -xzf /tmp/rc-release.tar.gz -C /tmp \
-  && rsync -a --include="*.min.js" --include="*.min.css" --include="*/" --exclude="*" \
-      /tmp/roundcubemail-${RC_VERSION}/ /var/www/roundcube/ \
-  && rsync -a /tmp/roundcubemail-${RC_VERSION}/skins/elastic/deps/ /var/www/roundcube/skins/elastic/deps/ \
-  && rsync -a /tmp/roundcubemail-${RC_VERSION}/program/js/ /var/www/roundcube/program/js/ \
+  && cp -r /tmp/roundcubemail-${RC_VERSION}/. /var/www/roundcube/ \
   && rm -rf /tmp/rc-release.tar.gz /tmp/roundcubemail-${RC_VERSION}
 
-# Remove dev/unneeded files
-RUN rm -rf .git tests .github Dockerfile Dockerfile.base scripts \
-  customizations.json CLAUDE.md docker-compose.yml
+# Overlay our customizations on top of the release
+COPY config/config.inc.php /var/www/roundcube/config/config.inc.php
+COPY plugins/nextcloud_sso /var/www/roundcube/plugins/nextcloud_sso
+COPY skins/avuz /var/www/roundcube/skins/avuz
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \

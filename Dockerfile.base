@@ -13,7 +13,7 @@ RUN install-php-extensions \
 
 RUN apk add --no-cache \
   nginx supervisor sqlite \
-  curl bash rsync
+  curl bash
 
 RUN { \
   echo '[www]'; \
