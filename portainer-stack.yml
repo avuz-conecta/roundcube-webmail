@@ -6,26 +6,36 @@ services:
     restart: unless-stopped
     ports:
       - "8081:80"
+    depends_on:
+      - redis
     volumes:
-      - roundcube_temp:/var/www/html/temp
-      - roundcube_logs:/var/www/html/logs
+      - roundcube_temp:/var/www/roundcube/temp
+      - roundcube_logs:/var/www/roundcube/logs
     environment:
       # Database — defaults to SQLite inside temp/ if not set
       # For MySQL: mysql://user:pass@host/dbname
       - ROUNDCUBE_DB_DSN=
 
-      # Security — generate with: pwgen -s 24 1
+      # Security — generate with: openssl rand -base64 24 | tr -d '='
       # CRITICAL: never change after first deploy
-      - ROUNDCUBE_DES_KEY=change-me-24-byte-des-key!!
+      - ROUNDCUBE_DES_KEY=
 
-      # SSO — must match values in avuzconecta Nextcloud app
+      # SSO — must match values in avuzconecta Nextcloud stack
       - ROUNDCUBE_SSO_SECRET=
       - ROUNDCUBE_CREDENTIAL_KEY=
 
-      # Redis (optional — leave empty to skip Redis cache)
-      - REDIS_HOST=
+      # Redis
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - roundcube_redis:/data
 
 volumes:
   roundcube_temp:
   roundcube_logs:
+  roundcube_redis:
