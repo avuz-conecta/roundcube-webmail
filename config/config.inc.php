@@ -6,7 +6,7 @@
 // ============================================
 
 // -- Database --
-$config['db_dsnw'] = getenv('ROUNDCUBE_DB_DSN') ?: 'sqlite:////var/www/html/temp/roundcube.db';
+$config['db_dsnw'] = getenv('ROUNDCUBE_DB_DSN') ?: 'sqlite:////var/www/roundcube/temp/roundcube.db';
 
 // -- IMAP (Zoho) --
 $config['default_host'] = 'ssl://imap.zoho.com';
