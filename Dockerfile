@@ -25,6 +25,8 @@ RUN curl -sL "https://github.com/roundcube/roundcubemail/releases/download/${RC_
   && tar -xzf /tmp/rc-release.tar.gz -C /tmp \
   && rsync -a --include="*.min.js" --include="*.min.css" --include="*/" --exclude="*" \
       /tmp/roundcubemail-${RC_VERSION}/ /var/www/roundcube/ \
+  && rsync -a /tmp/roundcubemail-${RC_VERSION}/skins/elastic/deps/ /var/www/roundcube/skins/elastic/deps/ \
+  && rsync -a /tmp/roundcubemail-${RC_VERSION}/program/js/ /var/www/roundcube/program/js/ \
   && rm -rf /tmp/rc-release.tar.gz /tmp/roundcubemail-${RC_VERSION}
 
 # Remove dev/unneeded files
