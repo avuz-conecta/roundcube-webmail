@@ -69,6 +69,13 @@ $config['mime_param_folding'] = 1;
 $config['support_url'] = '';
 $config['display_version'] = false;
 
+// -- Session cookie — required for iframe embedding across subdomains --
+// SameSite=None allows the session cookie to be sent inside an iframe
+// served from a different subdomain. Requires HTTPS (Secure flag).
+ini_set('session.cookie_samesite', 'None');
+ini_set('session.cookie_secure', '1');
+ini_set('session.cookie_httponly', '1');
+
 // -- Logging --
 $config['log_driver'] = 'stdout';
 $config['log_logins'] = true;
