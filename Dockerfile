@@ -17,6 +17,16 @@ RUN cp composer.json-dist composer.json \
   && composer install --no-dev --optimize-autoloader --no-scripts \
   && rm -rf /root/.composer
 
+# Pull pre-compiled CSS and JS from the official release tarball.
+# The git repo only has LESS/source files; compiled assets are release-only.
+ARG RC_VERSION=1.6.14
+RUN curl -sL "https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/roundcubemail-${RC_VERSION}-complete.tar.gz" \
+    -o /tmp/rc-release.tar.gz \
+  && tar -xzf /tmp/rc-release.tar.gz -C /tmp \
+  && rsync -a --include="*.min.js" --include="*.min.css" --include="*/" --exclude="*" \
+      /tmp/roundcubemail-${RC_VERSION}/ /var/www/roundcube/ \
+  && rm -rf /tmp/rc-release.tar.gz /tmp/roundcubemail-${RC_VERSION}
+
 # Remove dev/unneeded files
 RUN rm -rf .git tests .github Dockerfile Dockerfile.base scripts \
   customizations.json CLAUDE.md docker-compose.yml
