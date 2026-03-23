@@ -1,0 +1,5 @@
+{
+  "name": "Avuz",
+  "extends": "elastic",
+  "config": {}
+}

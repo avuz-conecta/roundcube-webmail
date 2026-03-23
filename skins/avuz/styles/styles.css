@@ -1,0 +1,133 @@
+/* ============================================
+   Avuz skin — Elastic child skin overrides
+   Primary:    #2bb5e3 (cyan blue)
+   Accent:     #d2e314 (lime green)
+   Background: #f2f6fb (light blue-grey)
+   ============================================ */
+
+/* -- Page background -- */
+body {
+  background-color: #f2f6fb;
+}
+
+/* -- Primary links and interactive elements -- */
+a,
+a:hover {
+  color: #2bb5e3;
+}
+
+/* -- Toolbar and navigation -- */
+#taskmenu a.active,
+#taskmenu a:hover,
+.toolbar a:hover,
+.toolbar button:hover {
+  color: #2bb5e3;
+}
+
+#taskmenu a.active {
+  border-bottom-color: #2bb5e3;
+}
+
+/* -- Primary buttons -- */
+.btn-primary,
+input[type="submit"],
+button[type="submit"] {
+  background-color: #2bb5e3;
+  border-color: #2bb5e3;
+  color: #fff;
+  border-radius: 50px;
+}
+
+.btn-primary:hover,
+input[type="submit"]:hover,
+button[type="submit"]:hover {
+  background-color: #1f9fcb;
+  border-color: #1f9fcb;
+  color: #fff;
+}
+
+/* -- Selected/focused items in lists -- */
+.listing tr.focused td,
+.listing tr.selected td,
+.folder-list li.focused > a,
+.folder-list li.selected > a {
+  background-color: rgba(43, 181, 227, 0.12);
+  color: #2bb5e3;
+}
+
+.listing tr.focused td {
+  border-left: 3px solid #2bb5e3;
+}
+
+/* -- Unread message indicator -- */
+.listing .unread span.subject,
+.folder-list .unread > a {
+  color: #2bb5e3;
+}
+
+/* -- Folder unread badge -- */
+.folder-list .unread > a span.unreadcount {
+  background-color: #2bb5e3;
+  color: #fff;
+}
+
+/* -- Checkboxes and toggles -- */
+input[type="checkbox"]:checked + label::before,
+input[type="radio"]:checked + label::before {
+  background-color: #2bb5e3;
+  border-color: #2bb5e3;
+}
+
+/* -- Login page -- */
+#login-form {
+  background: #fff;
+  border-radius: 25px;
+  box-shadow: 0 4px 24px rgba(43, 181, 227, 0.10);
+}
+
+#login-form .input-group input:focus {
+  border-color: #2bb5e3;
+  box-shadow: 0 0 0 2px rgba(43, 181, 227, 0.15);
+}
+
+#login-form .btn-primary {
+  background-color: #d2e314;
+  border-color: #d2e314;
+  color: #333;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+#login-form .btn-primary:hover {
+  background-color: #bccf10;
+  border-color: #bccf10;
+  color: #333;
+}
+
+/* -- Header bar -- */
+#header {
+  background-color: #2bb5e3;
+}
+
+#header .username,
+#header a,
+#header button {
+  color: #fff;
+}
+
+/* -- Compose toolbar -- */
+#compose-toolbar .btn-send {
+  background-color: #2bb5e3;
+  border-color: #2bb5e3;
+  color: #fff;
+}
+
+/* -- Scrollbar accent -- */
+::-webkit-scrollbar-thumb {
+  background-color: rgba(43, 181, 227, 0.4);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #2bb5e3;
+}

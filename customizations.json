@@ -1,0 +1,60 @@
+{
+  "base_version": "1.6.14",
+  "target_version": "1.7.0",
+  "custom_commit_range": "1.6.14..HEAD",
+  "source_branch": "avuz-customization",
+  "entries": [
+    {
+      "id": "avuz-skin",
+      "type": "skin",
+      "paths": [
+        "skins/avuz/meta.json",
+        "skins/avuz/styles/styles.css",
+        "skins/avuz/images/logo.png",
+        "skins/avuz/images/logo2.png",
+        "skins/avuz/images/avuz-icon.png",
+        "skins/avuz/images/favicon.ico"
+      ],
+      "description": "Avuz child skin extending Elastic. Overrides primary color (#2bb5e3 cyan), accent (#d2e314 lime), background (#f2f6fb). Login page with rounded form and lime submit button.",
+      "risk": "low",
+      "notes": "CSS targets Elastic DOM classes. If Roundcube changes Elastic class names in a future version, selectors may silently break. Review skins/elastic/ diff on upgrade."
+    },
+    {
+      "id": "nextcloud-sso-plugin",
+      "type": "plugin",
+      "paths": [
+        "plugins/nextcloud_sso/nextcloud_sso.php"
+      ],
+      "description": "SSO plugin that reads ?nc_token= from the Nextcloud roundcube app, validates HMAC-SHA256 signature, decrypts the password with AES-256-CBC, and auto-authenticates the user. Falls back to login form if token is absent or invalid.",
+      "risk": "low",
+      "notes": "Requires ROUNDCUBE_SSO_SECRET and ROUNDCUBE_CREDENTIAL_KEY env vars on both Roundcube and Nextcloud containers. Token TTL is 60 seconds."
+    },
+    {
+      "id": "roundcube-config",
+      "type": "config",
+      "paths": [
+        "config/config.inc.php"
+      ],
+      "description": "Roundcube config: Zoho IMAP (imap.zoho.com:993 SSL) and SMTP (smtp.zoho.com:587 TLS), Redis/DB cache with messages_cache enabled, pt_BR locale, 'Conecta Mail' product name.",
+      "risk": "low",
+      "notes": "All secrets come from env vars. ROUNDCUBE_DES_KEY must never change after first deploy or stored passwords become unreadable."
+    },
+    {
+      "id": "docker",
+      "type": "docker",
+      "paths": [
+        "Dockerfile.base",
+        "Dockerfile",
+        "docker/entrypoint.sh",
+        "docker/nginx.conf",
+        "docker/supervisor.conf",
+        "scripts/build-base.sh",
+        "scripts/build-push.sh",
+        "portainer-stack.yml"
+      ],
+      "description": "Two-stage Docker build (base + app). PHP 8.2 FPM + Nginx + Supervisor. Entrypoint initializes DB schema on first boot. Multi-platform build scripts (arm64 local, amd64 staging/prod).",
+      "risk": "low",
+      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change."
+    }
+  ]
+}

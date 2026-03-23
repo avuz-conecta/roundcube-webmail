@@ -2,6 +2,8 @@
 logs/*
 temp/*
 config/*
+# track our avuz config (no secrets — all values from env vars)
+!config/config.inc.php
 plugins/*/config.inc.php
 
 # this is for the sample plugin (via composer)

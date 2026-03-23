@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  roundcube:
+    image: 10.50.100.103:8080/admin/avuz-roundcube:latest
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    volumes:
+      - roundcube_temp:/var/www/html/temp
+      - roundcube_logs:/var/www/html/logs
+    environment:
+      # Database — defaults to SQLite inside temp/ if not set
+      # For MySQL: mysql://user:pass@host/dbname
+      - ROUNDCUBE_DB_DSN=
+
+      # Security — generate with: pwgen -s 24 1
+      # CRITICAL: never change after first deploy
+      - ROUNDCUBE_DES_KEY=change-me-24-byte-des-key!!
+
+      # SSO — must match values in avuzconecta Nextcloud app
+      - ROUNDCUBE_SSO_SECRET=
+      - ROUNDCUBE_CREDENTIAL_KEY=
+
+      # Redis (optional — leave empty to skip Redis cache)
+      - REDIS_HOST=
+      - REDIS_PORT=6379
+
+volumes:
+  roundcube_temp:
+  roundcube_logs:
