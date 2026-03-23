@@ -17,10 +17,6 @@ RUN cp composer.json-dist composer.json \
   && composer install --no-dev --optimize-autoloader --no-scripts \
   && rm -rf /root/.composer
 
-# Copy our custom plugins and skin into public_html (Roundcube 1.6 web root)
-RUN cp -r plugins/nextcloud_sso public_html/plugins/ \
-  && cp -r skins/avuz public_html/skins/
-
 # Remove dev/unneeded files
 RUN rm -rf .git tests .github Dockerfile Dockerfile.base scripts \
   customizations.json CLAUDE.md docker-compose.yml
