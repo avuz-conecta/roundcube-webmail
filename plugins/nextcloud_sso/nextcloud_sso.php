@@ -150,7 +150,11 @@ class nextcloud_sso extends rcube_plugin
             return null;
         }
 
-        return ['email' => $payload['email'], 'password' => $password];
+        return [
+            'email' => $payload['email'],
+            'password' => $password,
+            'provider' => isset($payload['provider']) ? (string) $payload['provider'] : null,
+        ];
     }
 
     private function decryptPassword(string $encrypted): string
