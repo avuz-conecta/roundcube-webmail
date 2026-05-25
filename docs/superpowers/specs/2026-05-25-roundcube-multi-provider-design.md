@@ -11,6 +11,14 @@ Roundcube is hardwired to Zoho. Every user connects to `imap.zoho.com` /
 different mail server. We need one Roundcube image to route each user to their
 provider, decided at login time.
 
+## Architecture
+
+- **Roundcube**: one shared image, multi-provider. Routes each login to the
+  right provider based on a key in the SSO token.
+- **Nextcloud**: one container per client. Provider is **fixed per instance** —
+  every user in a client's container uses the same provider. NOT per-user.
+- Example: client1's NC → all users Zoho; client2's NC → all users digrepal.
+
 ## Decision summary
 
 - Provider identified by a **named key** (`zoho`, `digrepal`), not raw hosts.
@@ -18,6 +26,7 @@ provider, decided at login time.
   **optional** payload field. HMAC already protects it from tampering.
 - Roundcube owns the **key → host map**. NC never sends hosts — tight trust
   boundary; NC cannot point user credentials at an arbitrary server.
+- NC resolves the key **once per instance** (env var), same for all its users.
 - Unknown or missing key → **fall back to Zoho default**. Old tokens (no
   `provider` field) keep working unchanged.
 
@@ -31,8 +40,8 @@ provider, decided at login time.
 ## Data flow
 
 ```
-NC resolveProvider(userId): per-user setting -> app default -> "zoho"
-        │
+NC resolveProvider(): ROUNDCUBE_PROVIDER env (app value override) -> "zoho"
+        │  (instance-level, same for all users in this container)
         ▼
 NC buildToken: payload { email, enc_pass, exp, provider }  (provider optional)
         │  HMAC-signed, ?nc_token=
@@ -86,15 +95,26 @@ $config['avuz_providers'] = [
 
 ## avuz-server changes (`apps/roundcube/lib/Service/CredentialService.php`)
 
-- `resolveProvider(string $userId): string` — per-user `provider` setting →
-  app `default_provider` → `'zoho'`. Mirrors existing `resolveEmail` (line 72).
+- `resolveProvider(): string` — **instance-level**, no userId. Reads app value
+  `provider`, falling back to env `ROUNDCUBE_PROVIDER`, falling back to `'zoho'`.
+  Same value for every user in this container.
+  ```php
+  private function resolveProvider(): string {
+      return $this->config->getAppValue(self::APP_ID, 'provider',
+          (string) getenv('ROUNDCUBE_PROVIDER')) ?: 'zoho';
+  }
+  ```
 - `buildToken` — add `'provider' => $provider` to payload.
 - `buildIframeUrl` — resolve provider, pass to `buildToken`.
 
-### Provider assignment (no UI — via occ, same as `roundcube_url`)
+### Provider assignment (per NC instance)
+Set in the client's portainer stack (matches `ROUNDCUBE_SSO_SECRET` etc):
+```
+ROUNDCUBE_PROVIDER=digrepal      # client2 stack; client1 omits → zoho
+```
+App value override (post-deploy, optional):
 ```bash
-occ config:app:set roundcube default_provider --value zoho
-occ user:setting <uid> roundcube provider digrepal
+occ config:app:set roundcube provider --value digrepal
 ```
 
 ## Behavior matrix
@@ -115,14 +135,15 @@ nothing breaks. NC flips per-client (`occ user:setting`) after both deployed.
 
 - `resolveProvider` (Roundcube): known key → entry; unknown → Zoho + error;
   missing → Zoho, no error.
-- `resolveProvider` (NC): per-user wins over app default wins over `zoho`.
+- `resolveProvider` (NC): app value wins over env wins over `zoho`.
 - Token round-trip: NC builds with `provider`, Roundcube reads same key.
 - Manual: digrepal user logs in (IMAP 143 STARTTLS), sends mail (SMTP 587) —
   confirm send hits digrepal, not Zoho. Then a Zoho user, confirm unaffected.
 
 ## Out of scope
 
-- Admin UI for provider assignment (occ only, for now).
+- Per-user provider (instance-level only — each client gets own NC container).
+- Admin UI for provider assignment (env var / occ only).
 - More than two providers (map scales, but only zoho + digrepal defined).
 - Per-provider skin/branding.
 
