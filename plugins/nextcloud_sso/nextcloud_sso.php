@@ -23,6 +23,7 @@ class nextcloud_sso extends rcube_plugin
     {
         $this->include_stylesheet('avuz-overrides.css');
         $this->add_hook('startup', [$this, 'handleStartup']);
+        $this->add_hook('smtp_connect', [$this, 'applySmtp']);
     }
 
     /**
@@ -121,6 +122,20 @@ class nextcloud_sso extends rcube_plugin
                 . "}());",
                 'docready'
             );
+        }
+
+        return $args;
+    }
+
+    /**
+     * smtp_connect hook — runs every request. Overrides the SMTP host with the
+     * provider stashed at login. SMTP (unlike IMAP) is not session-persisted by
+     * Roundcube, so without this the host would revert to the Zoho config default.
+     */
+    public function applySmtp(array $args): array
+    {
+        if (!empty($_SESSION['avuz_smtp_host'])) {
+            $args['smtp_host'] = $_SESSION['avuz_smtp_host'];
         }
 
         return $args;
