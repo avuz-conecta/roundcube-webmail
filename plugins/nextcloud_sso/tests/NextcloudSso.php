@@ -15,25 +15,32 @@ class NextcloudSso_Plugin extends PHPUnit\Framework\TestCase
         ];
     }
 
-    function test_lookup_returns_entry_for_known_key()
+    public function test_lookup_returns_entry_for_known_key()
     {
         $entry = nextcloud_sso::lookupProvider($this->providers(), 'digrepal');
         $this->assertSame('tls://mail.digrepal.com.br:143', $entry['imap']);
         $this->assertSame('tls://mail.digrepal.com.br:587', $entry['smtp']);
     }
 
-    function test_lookup_returns_null_for_unknown_key()
+    public function test_lookup_returns_zoho_entry()
+    {
+        $entry = nextcloud_sso::lookupProvider($this->providers(), 'zoho');
+        $this->assertSame('ssl://imap.zoho.com:993', $entry['imap']);
+        $this->assertSame('tls://smtp.zoho.com:587', $entry['smtp']);
+    }
+
+    public function test_lookup_returns_null_for_unknown_key()
     {
         $this->assertNull(nextcloud_sso::lookupProvider($this->providers(), 'nope'));
     }
 
-    function test_lookup_returns_null_for_missing_key()
+    public function test_lookup_returns_null_for_missing_key()
     {
         $this->assertNull(nextcloud_sso::lookupProvider($this->providers(), null));
         $this->assertNull(nextcloud_sso::lookupProvider($this->providers(), ''));
     }
 
-    function test_applySmtp_overrides_host_from_session()
+    public function test_applySmtp_overrides_host_from_session()
     {
         $rcube  = rcube::get_instance();
         $plugin = new nextcloud_sso($rcube->plugins);
@@ -45,7 +52,7 @@ class NextcloudSso_Plugin extends PHPUnit\Framework\TestCase
         unset($_SESSION['avuz_smtp_host']);
     }
 
-    function test_applySmtp_leaves_host_when_session_empty()
+    public function test_applySmtp_leaves_host_when_session_empty()
     {
         $rcube  = rcube::get_instance();
         $plugin = new nextcloud_sso($rcube->plugins);

@@ -61,8 +61,9 @@ class nextcloud_sso extends rcube_plugin
         $providers = (array) $rcmail->config->get('avuz_providers', []);
         $entry = self::lookupProvider($providers, $credentials['provider']);
         if ($entry === null && !empty($credentials['provider'])) {
+            $loggedKey = substr($credentials['provider'], 0, 32);
             rcube::raise_error(
-                "nextcloud_sso: unknown provider key '{$credentials['provider']}', using default",
+                "nextcloud_sso: unknown provider key '{$loggedKey}', using default",
                 true, false
             );
         }
