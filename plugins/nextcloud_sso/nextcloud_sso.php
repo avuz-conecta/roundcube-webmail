@@ -17,11 +17,26 @@
  */
 class nextcloud_sso extends rcube_plugin
 {
-    public $task = 'login';
+    public $task = '.*';
 
     public function init(): void
     {
+        $this->include_stylesheet('avuz-overrides.css');
         $this->add_hook('startup', [$this, 'handleStartup']);
+    }
+
+    /**
+     * Map a provider key to its host entry. Null for unknown/empty key.
+     *
+     * @param array<string,array{imap:string,smtp:string}> $providers
+     */
+    public static function lookupProvider(array $providers, ?string $key): ?array
+    {
+        if ($key === null || $key === '') {
+            return null;
+        }
+
+        return $providers[$key] ?? null;
     }
 
     public function handleStartup(array $args): array
@@ -45,7 +60,53 @@ class nextcloud_sso extends rcube_plugin
 
         if ($result) {
             $rcmail->session->remove('temp');
-            $rcmail->output->redirect(['_task' => 'mail']);
+            $rcmail->session->regenerate_id(false);
+            $rcmail->session->set_auth_cookie();
+            $args['task'] = 'mail';
+            $args['action'] = '';
+        } else {
+            $email = json_encode($credentials['email']);
+            $rcmail->output->add_script(
+                "(function(){"
+                . "function escHtml(t){var d=document.createElement('div');d.appendChild(document.createTextNode(t));return d.innerHTML;}"
+                . "var email=" . $email . ";"
+                . "var ov=document.createElement('div');"
+                . "ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:10000;';"
+                . "ov.innerHTML="
+                . "'<div style=\"background:#fff;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.18)\">'"
+                . "+'<h3 style=\"margin:0 0 12px;font-size:1.1rem;color:#2f3a3f\">Autenticação de email necessária</h3>'"
+                . "+'<p style=\"margin:0 0 8px;color:#555;font-size:.9rem\">Sua senha do Conecta não coincide com a senha do email <strong>'+escHtml(email)+'</strong>.</p>'"
+                . "+'<p style=\"margin:0 0 8px;color:#555;font-size:.9rem\">Informe a senha do seu email:</p>'"
+                . "+'<input type=\"password\" id=\"rc-sso-pw\" autocomplete=\"current-password\" placeholder=\"Senha do email\" style=\"width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px;margin:8px 0 16px;font-size:1rem;box-sizing:border-box\" />'"
+                . "+'<p id=\"rc-sso-err\" style=\"display:none;color:#c00;font-size:.85rem;margin:0 0 8px\"></p>'"
+                . "+'<div style=\"display:flex;gap:8px;justify-content:flex-end\">'"
+                . "+'<button id=\"rc-sso-cancel\" style=\"padding:9px 20px;border-radius:50px;border:1px solid #ccc;background:#fff;cursor:pointer;font-size:.9rem;color:#555\">Cancelar</button>'"
+                . "+'<button id=\"rc-sso-submit\" style=\"padding:9px 20px;border-radius:50px;border:none;background:#2bb5e3;color:#fff;cursor:pointer;font-size:.9rem\">Conectar</button>'"
+                . "+'</div></div>';"
+                . "document.body.appendChild(ov);"
+                . "document.getElementById('rc-sso-pw').focus();"
+                . "document.getElementById('rc-sso-cancel').addEventListener('click',function(){ov.remove();});"
+                . "function submit(){"
+                . "  var pw=document.getElementById('rc-sso-pw').value;"
+                . "  if(!pw)return;"
+                . "  var btn=document.getElementById('rc-sso-submit');"
+                . "  btn.disabled=true;btn.textContent='Conectando...';"
+                . "  document.getElementById('rc-sso-err').style.display='none';"
+                . "  window.parent.postMessage({type:'roundcube-sso-password',email:email,password:pw},'*');"
+                . "}"
+                . "document.getElementById('rc-sso-submit').addEventListener('click',submit);"
+                . "document.getElementById('rc-sso-pw').addEventListener('keydown',function(e){if(e.key==='Enter')submit();});"
+                . "window.addEventListener('message',function(e){"
+                . "  if(!e.data||e.data.type!=='roundcube-sso-error')return;"
+                . "  var err=document.getElementById('rc-sso-err');"
+                . "  err.textContent=e.data.message||'Falha ao salvar senha. Tente novamente.';"
+                . "  err.style.display='block';"
+                . "  var btn=document.getElementById('rc-sso-submit');"
+                . "  btn.disabled=false;btn.textContent='Conectar';"
+                . "});"
+                . "}());",
+                'docready'
+            );
         }
 
         return $args;
@@ -116,6 +177,11 @@ class nextcloud_sso extends rcube_plugin
             return '';
         }
 
-        return base64_decode($decrypted);
+        $plain = base64_decode($decrypted);
+        if ($plain === false || $plain === '') {
+            return '';
+        }
+
+        return $plain;
     }
 }
