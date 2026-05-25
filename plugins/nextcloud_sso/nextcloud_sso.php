@@ -56,9 +56,23 @@ class nextcloud_sso extends rcube_plugin
         }
 
         $rcmail = rcmail::get_instance();
-        $result = $rcmail->login($credentials['email'], $credentials['password'], null, false);
+
+        $providers = (array) $rcmail->config->get('avuz_providers', []);
+        $entry = self::lookupProvider($providers, $credentials['provider']);
+        if ($entry === null && !empty($credentials['provider'])) {
+            rcube::raise_error(
+                "nextcloud_sso: unknown provider key '{$credentials['provider']}', using default",
+                true, false
+            );
+        }
+
+        $imapHost = $entry['imap'] ?? null;
+        $result = $rcmail->login($credentials['email'], $credentials['password'], $imapHost, false);
 
         if ($result) {
+            if ($entry !== null) {
+                $_SESSION['avuz_smtp_host'] = $entry['smtp'];
+            }
             $rcmail->session->remove('temp');
             $rcmail->session->regenerate_id(false);
             $rcmail->session->set_auth_cookie();
