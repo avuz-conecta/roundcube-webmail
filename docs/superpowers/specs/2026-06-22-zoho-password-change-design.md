@@ -75,7 +75,10 @@ Browser ──(HTTPS)──> Roundcube (internet-facing, no Zoho secret)
 
 ### Components
 
-**1. `password-broker` container (new)**
+**1. `password-broker` container (new) — git submodule in this repo's stack**
+- Lives in its **own git repository**, pulled into this repo as a **git submodule** (e.g.
+  `services/password-broker/`). Ships as its own service in this stack's docker-compose,
+  built/deployed alongside Roundcube.
 - Holds `ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ZOID`. Not internet-published; reachable only
   on the internal docker network.
 - Single endpoint, e.g. `POST /reset` with `{ email, current_pass, new_pass }`,
@@ -177,12 +180,16 @@ temp pw → IMAP login OK → user_create sets flag (provider==zoho)
 
 - `plugins/password/drivers/zoho_broker.php` lives in the upstream `password/drivers/` dir →
   record in `customizations.json` so it survives upstream rebases.
-- `plugins/avuz_force_password/` and the `password-broker` container are fully custom →
-  record in `customizations.json` and the build/compose setup.
+- `plugins/avuz_force_password/` is fully custom → record in `customizations.json`.
+- `password-broker` is a git submodule (own repo) wired as a compose service → record the
+  submodule + service in `customizations.json` and the build/compose setup. Upstream rebases
+  don't touch it; submodule pointer is updated independently.
 
 ## Open items to verify during planning
 
 - Broker runtime/language and how it ships in the stack (compose service, image).
+- Broker submodule: which repo/URL, submodule path in this tree, and how the build pulls it
+  (`git submodule update --init` in build script / Docker context).
 - Exact GET all-org-users endpoint + response shape for email→zuid lookup, and pagination
   for large orgs.
 - Whether `password` plugin fires a usable post-success hook, or the driver/plugin clears
