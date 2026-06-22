@@ -59,13 +59,22 @@ Sources:
 - https://www.zoho.com/mail/help/api/put-reset-user-password.html
 - https://www.zoho.com/mail/help/adminconsole/password-reset.html
 
+## Deployment topology
+
+- **Roundcube is a single shared deployment** (one stack, the docker-compose below),
+  multi-tenant via the SSO token's provider key. It is NOT deployed per-tenant.
+- **avuz-server / Nextcloud is per-tenant.** Each tenant's instance talks to the shared
+  Roundcube via SSO (`?nc_token=`) only — it never touches the broker.
+- **One broker for the whole platform**, in the Roundcube stack → exactly **one** copy of
+  the org-admin Zoho token, in one container. Pop radius = that one container.
+
 ## Architecture
 
 ```
 Browser ──(HTTPS)──> Roundcube (internet-facing, no Zoho secret)
-                         │  internal network only, shared secret / mTLS
+                         │  internal compose network only, shared secret
                          ▼
-                   password-broker container  (holds Zoho refresh token + ZOID)
+                   password-broker service  (holds Zoho refresh token + ZOID; no public port)
                          │  1. verify current_pass via IMAP login as user
                          │  2. resolve zuid by email (GET org users)
                          │  3. PUT reset to new_pass
@@ -75,12 +84,15 @@ Browser ──(HTTPS)──> Roundcube (internet-facing, no Zoho secret)
 
 ### Components
 
-**1. `password-broker` container (new) — git submodule in this repo's stack**
-- Lives in its **own git repository**, pulled into this repo as a **git submodule** (e.g.
-  `services/password-broker/`). Ships as its own service in this stack's docker-compose,
-  built/deployed alongside Roundcube.
-- Holds `ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ZOID`. Not internet-published; reachable only
-  on the internal docker network.
+**1. `password-broker` container (new) — subdirectory in this repo**
+- Code lives in `services/password-broker/` (a folder in **this** repo, not a submodule)
+  with its own Dockerfile. Built into its **own image** and run as its **own compose
+  service** alongside `roundcube` and `redis`. The container split is the security boundary;
+  source stays in one repo (no submodule friction).
+- Holds `ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ZOID`. **No `ports:` mapping** — reachable only
+  on the internal compose network (Roundcube hits `broker:<port>`), never the internet.
+  Roundcube's PHP cannot read the broker's env/memory even if compromised (separate
+  container).
 - Single endpoint, e.g. `POST /reset` with `{ email, current_pass, new_pass }`,
   authenticated by a shared secret (header) and/or mTLS.
 - Steps: verify `current_pass` (IMAP login to Zoho as `email`) → on success resolve `zuid`
@@ -150,6 +162,34 @@ password-broker container (env):
 | `ZOHO_ZOID` | Zoho organization id |
 | `BROKER_SHARED_SECRET` | Shared secret Roundcube presents to the broker |
 
+## Compose (broker as a third service)
+
+Add the broker to the existing stack (`roundcube`, `redis`). Sketch:
+
+```yaml
+services:
+  roundcube:
+    # ...existing...
+    environment:
+      # ...existing...
+      - AVUZ_BROKER_URL=http://broker:9000
+      - AVUZ_BROKER_SECRET=$AVUZ_BROKER_SECRET
+
+  broker:
+    image: registry.avuz.app/admin/avuz-password-broker:staging
+    build: ./services/password-broker
+    restart: unless-stopped
+    # NO ports: — internal compose network only
+    environment:
+      - ZOHO_CLIENT_ID=$ZOHO_CLIENT_ID
+      - ZOHO_CLIENT_SECRET=$ZOHO_CLIENT_SECRET
+      - ZOHO_REFRESH_TOKEN=$ZOHO_REFRESH_TOKEN
+      - ZOHO_ZOID=$ZOHO_ZOID
+      - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
+```
+
+`build-push.sh` builds/pushes both images (Roundcube + broker).
+
 ## Data flow (first login)
 
 ```
@@ -181,15 +221,13 @@ temp pw → IMAP login OK → user_create sets flag (provider==zoho)
 - `plugins/password/drivers/zoho_broker.php` lives in the upstream `password/drivers/` dir →
   record in `customizations.json` so it survives upstream rebases.
 - `plugins/avuz_force_password/` is fully custom → record in `customizations.json`.
-- `password-broker` is a git submodule (own repo) wired as a compose service → record the
-  submodule + service in `customizations.json` and the build/compose setup. Upstream rebases
-  don't touch it; submodule pointer is updated independently.
+- `services/password-broker/` is a fully-custom subdirectory + compose service → record in
+  `customizations.json` and the build/compose setup. Upstream rebases don't touch it.
 
 ## Open items to verify during planning
 
-- Broker runtime/language and how it ships in the stack (compose service, image).
-- Broker submodule: which repo/URL, submodule path in this tree, and how the build pulls it
-  (`git submodule update --init` in build script / Docker context).
+- Broker runtime/language and its Dockerfile in `services/password-broker/` (small service).
+- `build-push.sh` changes to build/push both images.
 - Exact GET all-org-users endpoint + response shape for email→zuid lookup, and pagination
   for large orgs.
 - Whether `password` plugin fires a usable post-success hook, or the driver/plugin clears
