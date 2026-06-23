@@ -244,12 +244,18 @@ temp pw → IMAP login OK (storage_host = zoho) → user_create sets newuserpass
 - Password-plugin config lives in `config/config.inc.php` (already tracked) → note in
   `customizations.json`.
 
-## Per-client onboarding prerequisite
+## Per-client onboarding prerequisites
 
-IMAP access must be enabled in each client's Zoho org (org-level "enable IMAP for all users")
-so a fresh mailbox can IMAP-login with the admin-set temp password before any web login. The
-forced-change flow and the broker's current-password verification both depend on it. Verified
-in plan Task 0 before any code.
+Two hard requirements per client org (both verified in plan Task 0 before any code):
+
+1. **Enable IMAP access org-wide.** New Zoho orgs often ship with IMAP off
+   (Admin Console → Security & Compliance / Email Policy → IMAP access). Without it, the
+   user can't log into Roundcube and the broker can't verify the current password.
+2. **Do NOT check Zoho's "force password change at next login"** when creating the mailbox.
+   That flag **blocks IMAP** until the password is changed via Zoho's *web* login — which
+   makes our Roundcube-over-IMAP forced-change impossible. We force the change ourselves via
+   `password_force_new_user`; create the mailbox with a plain temp password and leave Zoho's
+   force flag off.
 
 ## Open items to verify during planning/implementation
 

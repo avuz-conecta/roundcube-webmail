@@ -51,19 +51,26 @@ admin-set temp password, with no prior web login. If IMAP is off by default or f
 is required, the user can't reach the forced-change screen and the broker can't verify. Confirm
 before building.
 
-- [ ] **Step 1: Create a throwaway Zoho mailbox** in one client org with a known temp password.
+- [ ] **Step 1: Enable IMAP org-wide**
 
-- [ ] **Step 2: Attempt IMAP login with no prior web login**
+Zoho Mail Admin Console → Security & Compliance / Email Policy (or Mail → IMAP/POP/ActiveSync
+access) → enable **IMAP access** for the org. New orgs often have it off.
+
+- [ ] **Step 2: Create a throwaway Zoho mailbox WITHOUT the force-change flag**
+
+Create a user with a known temp password and **leave "force password change at next login"
+UNCHECKED**. That Zoho flag blocks IMAP until a web password change and conflicts with our
+Roundcube forced-change — we force it ourselves via `password_force_new_user`.
+
+- [ ] **Step 3: Attempt IMAP login with no prior web login**
 
 Run: `openssl s_client -connect imap.zoho.com:993 -crlf -quiet`
 then type: `a LOGIN newuser@client.com "TempPass"`
-Expected: `a OK ...` (authenticated). If `NO`/auth failure → IMAP is gated.
+Expected: `a OK ...` (authenticated). If `NO`/auth failure → IMAP still gated; recheck Steps 1-2.
 
-- [ ] **Step 3: If gated, enable IMAP org-wide**
-
-In Zoho Mail Admin → Mail Accounts / IMAP Access (or org-level "Enable IMAP for all users"),
-enable IMAP, and record this as a **per-client onboarding prerequisite**. Re-run Step 2 until
-`OK`. Only proceed to Task 1 once IMAP login with a fresh temp password succeeds.
+Only proceed to Task 1 once IMAP login with a fresh temp password (no force flag) succeeds.
+Record "IMAP enabled org-wide + create mailboxes without the force-change flag" as the
+per-client onboarding rule.
 
 ---
 
