@@ -38,7 +38,32 @@
 - Modify: `config/config.inc.php` — enable + configure password plugin
 - Modify: `scripts/build-push.sh` — build/push broker image
 - Modify: `customizations.json` — record new files
-- Create/Modify: `docker-compose.yml` — add broker service (if compose tracked here)
+- Create: `deploy/stack.reference.yml` — reference copy of the Portainer stack (broker service)
+
+---
+
+## Task 0: Pre-flight feasibility (BLOCKER — do before any code)
+
+**Files:** none (manual verification).
+
+The whole flow assumes a freshly-created Zoho mailbox can authenticate over **IMAP** with the
+admin-set temp password, with no prior web login. If IMAP is off by default or first web login
+is required, the user can't reach the forced-change screen and the broker can't verify. Confirm
+before building.
+
+- [ ] **Step 1: Create a throwaway Zoho mailbox** in one client org with a known temp password.
+
+- [ ] **Step 2: Attempt IMAP login with no prior web login**
+
+Run: `openssl s_client -connect imap.zoho.com:993 -crlf -quiet`
+then type: `a LOGIN newuser@client.com "TempPass"`
+Expected: `a OK ...` (authenticated). If `NO`/auth failure → IMAP is gated.
+
+- [ ] **Step 3: If gated, enable IMAP org-wide**
+
+In Zoho Mail Admin → Mail Accounts / IMAP Access (or org-level "Enable IMAP for all users"),
+enable IMAP, and record this as a **per-client onboarding prerequisite**. Re-run Step 2 until
+`OK`. Only proceed to Task 1 once IMAP login with a fresh temp password succeeds.
 
 ---
 
@@ -49,11 +74,12 @@
 - Create: `services/password-broker/tsconfig.json`
 - Create: `services/password-broker/src/config.ts`
 - Create: `services/password-broker/src/server.ts`
+- Test: `services/password-broker/src/config.test.ts`
 - Test: `services/password-broker/src/server.test.ts`
 
 **Interfaces:**
-- Produces: `createServer(deps: ServerDeps): http.Server`; `ServerDeps = { resetPassword: (input: ResetInput) => Promise<ResetResult> }`; `ResetInput = { email: string; currentPass: string; newPass: string }`; `ResetResult = { status: 200 | 401 | 403 | 404 | 502; body: { ok: boolean; error?: string } }`.
-- Produces: `loadConfig(env: NodeJS.ProcessEnv): BrokerConfig` with `{ port, sharedSecret, zoho: { clientId, clientSecret, refreshToken, zoid } }`.
+- Produces: `createServer(deps: ServerDeps): http.Server`; `ServerDeps = { resetPassword: (input: ResetInput) => Promise<ResetResult> }`; `ResetInput = { email: string; currentPass: string; newPass: string }`; `ResetResult = { status: 200 | 401 | 403 | 404 | 422 | 502; body: { ok: boolean; error?: string } }`.
+- Produces: `loadConfig(env): BrokerConfig` with `{ port, sharedSecret, imap: {host,port}, tenants: Map<domain, ZohoOrg> }`; `resolveTenant(tenants, email): ZohoOrg | null` (by email domain); `ZohoOrg = { clientId, clientSecret, refreshToken, zoid }`.
 
 - [ ] **Step 1: Write package.json**
 
@@ -64,7 +90,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/main.js",
     "test": "vitest run",
     "dev": "tsx src/server.ts"
   },
@@ -105,10 +131,18 @@ Expected: `node_modules/` created, no errors.
 - [ ] **Step 4: Write config.ts**
 
 ```ts
+export type ZohoOrg = { clientId: string; clientSecret: string; refreshToken: string; zoid: string };
+
 export type BrokerConfig = {
   port: number;
   sharedSecret: string;
-  zoho: { clientId: string; clientSecret: string; refreshToken: string; zoid: string };
+  imap: { host: string; port: number };
+  tenants: Map<string, ZohoOrg>;
+};
+
+const parseTenants = (raw: string): Map<string, ZohoOrg> => {
+  const parsed = JSON.parse(raw) as Record<string, ZohoOrg>;
+  return new Map(Object.entries(parsed).map(([domain, org]) => [domain.toLowerCase(), org]));
 };
 
 export const loadConfig = (env: NodeJS.ProcessEnv): BrokerConfig => {
@@ -121,15 +155,47 @@ export const loadConfig = (env: NodeJS.ProcessEnv): BrokerConfig => {
   return {
     port: Number(env.PORT ?? 9000),
     sharedSecret: required("BROKER_SHARED_SECRET"),
-    zoho: {
-      clientId: required("ZOHO_CLIENT_ID"),
-      clientSecret: required("ZOHO_CLIENT_SECRET"),
-      refreshToken: required("ZOHO_REFRESH_TOKEN"),
-      zoid: required("ZOHO_ZOID"),
-    },
+    imap: { host: env.ZOHO_IMAP_HOST ?? "imap.zoho.com", port: Number(env.ZOHO_IMAP_PORT ?? 993) },
+    tenants: parseTenants(required("ZOHO_TENANTS")),
   };
 };
+
+export const resolveTenant = (tenants: Map<string, ZohoOrg>, email: string): ZohoOrg | null => {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return null;
+  return tenants.get(domain) ?? null;
+};
 ```
+
+- [ ] **Step 4b: Write + run the config resolver test**
+
+```ts
+import { describe, expect, test } from "vitest";
+import { loadConfig, resolveTenant } from "./config.js";
+
+const tenantsJson = '{"Client-A.com":{"clientId":"i","clientSecret":"s","refreshToken":"r","zoid":"111"}}';
+const env = { BROKER_SHARED_SECRET: "x", ZOHO_TENANTS: tenantsJson } as NodeJS.ProcessEnv;
+
+describe("config", () => {
+  test("resolves tenant by domain case-insensitively", () => {
+    const { tenants } = loadConfig(env);
+    expect(resolveTenant(tenants, "user@CLIENT-a.com")?.zoid).toBe("111");
+  });
+
+  test("returns null for unknown domain", () => {
+    const { tenants } = loadConfig(env);
+    expect(resolveTenant(tenants, "user@other.com")).toBeNull();
+  });
+
+  test("returns null for malformed email", () => {
+    const { tenants } = loadConfig(env);
+    expect(resolveTenant(tenants, "noatsign")).toBeNull();
+  });
+});
+```
+
+Run: `cd services/password-broker && npm test config`
+Expected: PASS (after Step 4's config.ts exists).
 
 - [ ] **Step 5: Write the failing server test**
 
@@ -179,7 +245,7 @@ Expected: FAIL — `createServer` not found.
 import http from "node:http";
 
 export type ResetInput = { email: string; currentPass: string; newPass: string };
-export type ResetResult = { status: 200 | 401 | 403 | 404 | 502; body: { ok: boolean; error?: string } };
+export type ResetResult = { status: 200 | 401 | 403 | 404 | 422 | 502; body: { ok: boolean; error?: string } };
 export type ServerDeps = { sharedSecret: string; resetPassword: (input: ResetInput) => Promise<ResetResult> };
 
 const readJson = (request: http.IncomingMessage): Promise<unknown> =>
@@ -227,7 +293,7 @@ Expected: PASS (both tests).
 - [ ] **Step 9: Commit**
 
 ```bash
-git add services/password-broker/package.json services/password-broker/tsconfig.json services/password-broker/src/config.ts services/password-broker/src/server.ts services/password-broker/src/server.test.ts
+git add services/password-broker/package.json services/password-broker/package-lock.json services/password-broker/tsconfig.json services/password-broker/src/config.ts services/password-broker/src/config.test.ts services/password-broker/src/server.ts services/password-broker/src/server.test.ts
 git commit -m "feat(broker): scaffold node service with shared-secret guard"
 ```
 
@@ -240,8 +306,8 @@ git commit -m "feat(broker): scaffold node service with shared-secret guard"
 - Test: `services/password-broker/src/zoho-token.test.ts`
 
 **Interfaces:**
-- Consumes: `BrokerConfig.zoho` from Task 1.
-- Produces: `createTokenProvider(zoho, opts?): () => Promise<string>` where `opts = { fetchImpl?: typeof fetch; now?: () => number }`. Returns a cached access token, refreshing when within 60s of expiry.
+- Consumes: `ZohoOrg` from Task 1.
+- Produces: `createTokenProvider(org: ZohoOrg, opts?): () => Promise<string>` where `opts = { fetchImpl?: typeof fetch; now?: () => number }`. Returns a cached access token for that org, refreshing when within 60s of expiry. One provider per tenant (main builds the map).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -249,12 +315,12 @@ git commit -m "feat(broker): scaffold node service with shared-secret guard"
 import { describe, expect, test, vi } from "vitest";
 import { createTokenProvider } from "./zoho-token.js";
 
-const zoho = { clientId: "id", clientSecret: "sec", refreshToken: "ref", zoid: "1" };
+const org = { clientId: "id", clientSecret: "sec", refreshToken: "ref", zoid: "1" };
 
 describe("token provider", () => {
   test("fetches then caches the access token", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ access_token: "abc", expires_in: 3600 }), { status: 200 }));
-    const getToken = createTokenProvider(zoho, { fetchImpl, now: () => 0 });
+    const getToken = createTokenProvider(org, { fetchImpl, now: () => 0 });
     expect(await getToken()).toBe("abc");
     expect(await getToken()).toBe("abc");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -264,7 +330,7 @@ describe("token provider", () => {
     let token = "first";
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ access_token: token, expires_in: 3600 }), { status: 200 }));
     let clock = 0;
-    const getToken = createTokenProvider(zoho, { fetchImpl, now: () => clock });
+    const getToken = createTokenProvider(org, { fetchImpl, now: () => clock });
     expect(await getToken()).toBe("first");
     token = "second";
     clock = 3600_000;
@@ -282,14 +348,14 @@ Expected: FAIL — `createTokenProvider` not found.
 - [ ] **Step 3: Write zoho-token.ts**
 
 ```ts
-import type { BrokerConfig } from "./config.js";
+import type { ZohoOrg } from "./config.js";
 
 type TokenOpts = { fetchImpl?: typeof fetch; now?: () => number };
 
 const TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token";
 const EXPIRY_SKEW_MS = 60_000;
 
-export const createTokenProvider = (zoho: BrokerConfig["zoho"], opts: TokenOpts = {}): (() => Promise<string>) => {
+export const createTokenProvider = (org: ZohoOrg, opts: TokenOpts = {}): (() => Promise<string>) => {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const now = opts.now ?? Date.now;
   let cached: { token: string; expiresAt: number } | null = null;
@@ -298,9 +364,9 @@ export const createTokenProvider = (zoho: BrokerConfig["zoho"], opts: TokenOpts 
     if (cached && now() < cached.expiresAt - EXPIRY_SKEW_MS) return cached.token;
 
     const params = new URLSearchParams({
-      refresh_token: zoho.refreshToken,
-      client_id: zoho.clientId,
-      client_secret: zoho.clientSecret,
+      refresh_token: org.refreshToken,
+      client_id: org.clientId,
+      client_secret: org.clientSecret,
       grant_type: "refresh_token",
     });
     const response = await fetchImpl(`${TOKEN_URL}?${params.toString()}`, { method: "POST" });
@@ -521,22 +587,23 @@ git commit -m "feat(broker): verify current password over imap"
 
 **Files:**
 - Create: `services/password-broker/src/reset.ts`
-- Modify: `services/password-broker/src/server.ts` (no change to exports; reused)
-- Modify: `services/password-broker/src/config.ts` (add IMAP host/port constants)
 - Create: `services/password-broker/src/main.ts`
 - Test: `services/password-broker/src/reset.test.ts`
 
 **Interfaces:**
-- Consumes: `verifyImapPassword` (Task 4), `findZuidByEmail` + `resetZohoPassword` (Task 3).
-- Produces: `createResetPassword(deps): (input: ResetInput) => Promise<ResetResult>` where `deps = { verify: (email, pass) => Promise<boolean>; findZuid: (email) => Promise<string | null>; reset: (zuid, newPass) => Promise<void> }`. Mapping: bad current → 403; zuid null → 404; verify/reset throw → 502; success → 200.
+- Consumes: `resolveTenant` + `ZohoOrg` (Task 1), `verifyImapPassword` (Task 4), `findZuidByEmail` + `resetZohoPassword` (Task 3), `createTokenProvider` (Task 2).
+- Produces: `createResetPassword(deps): (input: ResetInput) => Promise<ResetResult>` where `deps = { resolveOrg: (email) => ZohoOrg | null; verify: (email, pass) => Promise<boolean>; findZuid: (org, email) => Promise<string | null>; reset: (org, zuid, newPass) => Promise<void> }`. Mapping: unknown domain → 422; bad current → 403; zuid null → 404; verify/reset throw → 502; success → 200.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 import { describe, expect, test, vi } from "vitest";
 import { createResetPassword } from "./reset.js";
+import type { ZohoOrg } from "./config.js";
 
+const org: ZohoOrg = { clientId: "i", clientSecret: "s", refreshToken: "r", zoid: "1" };
 const base = {
+  resolveOrg: (_email: string): ZohoOrg | null => org,
   verify: vi.fn(async () => true),
   findZuid: vi.fn(async () => "7"),
   reset: vi.fn(async () => {}),
@@ -549,11 +616,16 @@ describe("reset flow", () => {
     expect((await run(input)).status).toBe(200);
   });
 
+  test("422 when domain has no tenant", async () => {
+    const run = createResetPassword({ ...base, resolveOrg: () => null });
+    expect((await run(input)).status).toBe(422);
+  });
+
   test("403 when current password wrong", async () => {
     const run = createResetPassword({ ...base, verify: vi.fn(async () => false) });
     const result = await run(input);
     expect(result.status).toBe(403);
-    expect(base.reset).not.toHaveBeenCalledWith("7", "new");
+    expect(base.reset).not.toHaveBeenCalled();
   });
 
   test("404 when account not found", async () => {
@@ -576,23 +648,28 @@ Expected: FAIL — `createResetPassword` not found.
 - [ ] **Step 3: Write reset.ts**
 
 ```ts
+import type { ZohoOrg } from "./config.js";
 import type { ResetInput, ResetResult } from "./server.js";
 
 export type ResetDeps = {
+  resolveOrg: (email: string) => ZohoOrg | null;
   verify: (email: string, pass: string) => Promise<boolean>;
-  findZuid: (email: string) => Promise<string | null>;
-  reset: (zuid: string, newPass: string) => Promise<void>;
+  findZuid: (org: ZohoOrg, email: string) => Promise<string | null>;
+  reset: (org: ZohoOrg, zuid: string, newPass: string) => Promise<void>;
 };
 
 export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Promise<ResetResult>) => async (input) => {
+  const org = deps.resolveOrg(input.email);
+  if (org === null) return { status: 422, body: { ok: false, error: "unknown tenant domain" } };
+
   try {
     const valid = await deps.verify(input.email, input.currentPass);
     if (!valid) return { status: 403, body: { ok: false, error: "current password incorrect" } };
 
-    const zuid = await deps.findZuid(input.email);
+    const zuid = await deps.findZuid(org, input.email);
     if (zuid === null) return { status: 404, body: { ok: false, error: "account not found" } };
 
-    await deps.reset(zuid, input.newPass);
+    await deps.reset(org, zuid, input.newPass);
     return { status: 200, body: { ok: true } };
   } catch {
     return { status: 502, body: { ok: false, error: "upstream error" } };
@@ -603,25 +680,14 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd services/password-broker && npm test reset`
-Expected: PASS.
+Expected: PASS (all five).
 
-- [ ] **Step 5: Add IMAP constants to config.ts**
+- [ ] **Step 5: Write main.ts (composition root)**
 
-Append to `BrokerConfig` and `loadConfig`:
-
-```ts
-// in BrokerConfig type, add:
-//   imap: { host: string; port: number };
-// in loadConfig return, add:
-//   imap: { host: env.ZOHO_IMAP_HOST ?? "imap.zoho.com", port: Number(env.ZOHO_IMAP_PORT ?? 993) },
-```
-
-Apply both edits to `src/config.ts`.
-
-- [ ] **Step 6: Write main.ts (composition root)**
+Per-tenant token providers cached by `zoid`; tenant resolved per request by email domain.
 
 ```ts
-import { loadConfig } from "./config.js";
+import { loadConfig, resolveTenant, type ZohoOrg } from "./config.js";
 import { createServer } from "./server.js";
 import { createTokenProvider } from "./zoho-token.js";
 import { findZuidByEmail, resetZohoPassword } from "./zoho-accounts.js";
@@ -629,13 +695,22 @@ import { verifyImapPassword } from "./verify-password.js";
 import { createResetPassword } from "./reset.js";
 
 const config = loadConfig(process.env);
-const getToken = createTokenProvider(config.zoho);
-const accountsDeps = { zoid: config.zoho.zoid, getToken };
+
+const tokenProviders = new Map<string, () => Promise<string>>();
+const accountsDepsFor = (org: ZohoOrg) => {
+  let getToken = tokenProviders.get(org.zoid);
+  if (!getToken) {
+    getToken = createTokenProvider(org);
+    tokenProviders.set(org.zoid, getToken);
+  }
+  return { zoid: org.zoid, getToken };
+};
 
 const resetPassword = createResetPassword({
+  resolveOrg: (email) => resolveTenant(config.tenants, email),
   verify: (email, pass) => verifyImapPassword(config.imap, email, pass),
-  findZuid: (email) => findZuidByEmail(accountsDeps, email),
-  reset: (zuid, newPass) => resetZohoPassword(accountsDeps, zuid, newPass),
+  findZuid: (org, email) => findZuidByEmail(accountsDepsFor(org), email),
+  reset: (org, zuid, newPass) => resetZohoPassword(accountsDepsFor(org), zuid, newPass),
 });
 
 createServer({ sharedSecret: config.sharedSecret, resetPassword }).listen(config.port, () => {
@@ -643,16 +718,16 @@ createServer({ sharedSecret: config.sharedSecret, resetPassword }).listen(config
 });
 ```
 
-- [ ] **Step 7: Build + run full test suite**
+- [ ] **Step 6: Build + run full test suite**
 
 Run: `cd services/password-broker && npm run build && npm test`
 Expected: `tsc` succeeds (no type errors), all tests PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add services/password-broker/src/reset.ts services/password-broker/src/reset.test.ts services/password-broker/src/config.ts services/password-broker/src/main.ts
-git commit -m "feat(broker): compose reset flow + composition root"
+git add services/password-broker/src/reset.ts services/password-broker/src/reset.test.ts services/password-broker/src/main.ts
+git commit -m "feat(broker): tenant-aware reset flow + composition root"
 ```
 
 ---
@@ -663,7 +738,7 @@ git commit -m "feat(broker): compose reset flow + composition root"
 - Create: `services/password-broker/Dockerfile`
 - Create: `services/password-broker/.dockerignore`
 
-**Interfaces:** none (produces an image running `node dist/server.js` → wait, entry is `main.ts` → `dist/main.js`).
+**Interfaces:** none (produces an image running `node dist/main.js`).
 
 - [ ] **Step 1: Write .dockerignore**
 
@@ -717,11 +792,19 @@ git commit -m "feat(broker): dockerfile for password-broker"
 
 **Files:**
 - Create: `plugins/password/drivers/zoho_broker.php`
-- Test: `plugins/password/tests/ZohoBroker.php`
+- Create: `plugins/password/tests/ZohoBroker.php`
+- Modify: `tests/phpunit.xml` (register the new test file in the Plugins testsuite)
 
 **Interfaces:**
 - Consumes: broker `POST /reset` contract (Task 1/5): JSON `{email,current_pass,new_pass}`, header `X-Broker-Secret`, responses 200/403/404/502.
 - Produces: `class rcube_zoho_broker_password` with `save($curpass, $newpass, $username): int` returning Roundcube codes. Static helper `rcube_zoho_broker_password::map_status(int $http): int` for testability.
+
+**Note on coverage:** the existing `plugins/password/tests/Password.php::test_all_drivers()`
+globs `drivers/*.php` and load-tests each — so `zoho_broker.php` gets free load/syntax
+coverage (and must load cleanly, referencing `rcmail`/`password`/`rcube` only inside `save()`,
+not at class-definition time). `map_status` is the unit-tested seam. The HTTP payload/header
+in `save()` is verified end-to-end in Task 10 Step 5, not in a unit test (it depends on the
+`rcmail` singleton + Guzzle client, not worth mocking here).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -762,12 +845,20 @@ class ZohoBroker_Plugin extends PHPUnit\Framework\TestCase
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Register the test in tests/phpunit.xml**
 
-Run: `./vendor/bin/phpunit plugins/password/tests/ZohoBroker.php`
-Expected: FAIL — class not found.
+Add inside `<testsuite name="Plugins">` (next to the `nextcloud_sso` line):
 
-- [ ] **Step 3: Write zoho_broker.php**
+```xml
+      <file>./../plugins/password/tests/ZohoBroker.php</file>
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `vendor/bin/phpunit -c tests/phpunit.xml --filter ZohoBroker`
+Expected: FAIL — class `rcube_zoho_broker_password` not found.
+
+- [ ] **Step 4: Write zoho_broker.php**
 
 ```php
 <?php
@@ -825,15 +916,15 @@ class rcube_zoho_broker_password
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
-Run: `./vendor/bin/phpunit plugins/password/tests/ZohoBroker.php`
+Run: `vendor/bin/phpunit -c tests/phpunit.xml --filter ZohoBroker`
 Expected: PASS (all four).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add plugins/password/drivers/zoho_broker.php plugins/password/tests/ZohoBroker.php
+git add plugins/password/drivers/zoho_broker.php plugins/password/tests/ZohoBroker.php tests/phpunit.xml
 git commit -m "feat(password): zoho_broker driver calling internal broker"
 ```
 
@@ -898,68 +989,107 @@ git commit -m "feat(config): enable password plugin, zoho_broker driver, zoho ho
 
 ---
 
-## Task 9: Compose service, build script, customizations
+## Task 9: Build script, reference stack, customizations
+
+**Deployment model:** the live stack is **hand-edited in Portainer** (not a git-backed
+compose). So this task: (a) builds/pushes the broker image, (b) commits a **reference**
+`deploy/stack.reference.yml` documenting the full stack (so the repo records the intended
+topology), and (c) the actual Portainer edit is a **manual step in Task 10**. No task edits a
+live `docker-compose.yml` — there isn't one.
 
 **Files:**
 - Modify: `scripts/build-push.sh` (build/push broker image)
+- Create: `deploy/stack.reference.yml` (documentation of the Portainer stack)
 - Modify: `customizations.json`
-- Modify/Create: `docker-compose.yml` (broker service) — only if compose is tracked in this repo; otherwise document in `customizations.json` for the Portainer stack.
 
 **Interfaces:** none (deployment wiring).
 
 - [ ] **Step 1: Inspect build-push.sh**
 
 Run: `cat scripts/build-push.sh`
-Note how the Roundcube image tag/registry are built so the broker follows the same pattern.
+Note how the Roundcube image tag/registry variables are set so the broker follows the same pattern.
 
 - [ ] **Step 2: Add broker build/push to build-push.sh**
 
 After the Roundcube image build/push, add (adapt variable names to the existing script):
 
 ```bash
-# Build + push the password-broker image
+# Build + push the password-broker image (same tag/registry as roundcube)
 docker build -t "${REGISTRY}/avuz-password-broker:${TAG}" services/password-broker
 docker push "${REGISTRY}/avuz-password-broker:${TAG}"
 ```
 
-- [ ] **Step 3: Add the broker service to the compose/stack**
+- [ ] **Step 3: Create deploy/stack.reference.yml**
 
-Add to the stack (alongside `roundcube`, `redis`), and add the two broker env vars to the `roundcube` service:
+Write the full intended stack (kept in-repo as the source-of-truth reference; Portainer is
+updated by hand from it):
 
 ```yaml
+# Reference copy of the Portainer stack. Portainer is hand-edited; keep this in sync.
+version: '3.8'
+
+services:
   roundcube:
+    image: registry.avuz.app/admin/avuz-roundcube:staging
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - redis
+      - broker
+    volumes:
+      - roundcube_temp:/var/www/roundcube/temp
+      - roundcube_logs:/var/www/roundcube/logs
     environment:
+      - ROUNDCUBE_DB_DSN=
+      - ROUNDCUBE_DES_KEY=$ROUNDCUBE_DES_KEY
+      - ROUNDCUBE_SSO_SECRET=$ROUNDCUBE_SSO_SECRET
+      - ROUNDCUBE_CREDENTIAL_KEY=$ROUNDCUBE_CREDENTIAL_KEY
       - AVUZ_BROKER_URL=http://broker:9000
       - AVUZ_BROKER_SECRET=$AVUZ_BROKER_SECRET
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
   broker:
     image: registry.avuz.app/admin/avuz-password-broker:staging
     restart: unless-stopped
+    # NO ports — internal compose network only
     environment:
-      - ZOHO_CLIENT_ID=$ZOHO_CLIENT_ID
-      - ZOHO_CLIENT_SECRET=$ZOHO_CLIENT_SECRET
-      - ZOHO_REFRESH_TOKEN=$ZOHO_REFRESH_TOKEN
-      - ZOHO_ZOID=$ZOHO_ZOID
-      - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
       - PORT=9000
-```
+      - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
+      - ZOHO_TENANTS=$ZOHO_TENANTS
+      - ZOHO_IMAP_HOST=imap.zoho.com
+      - ZOHO_IMAP_PORT=993
 
-(No `ports:` — internal only.)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - roundcube_redis:/data
+
+volumes:
+  roundcube_temp:
+  roundcube_logs:
+  roundcube_redis:
+```
 
 - [ ] **Step 4: Record customizations**
 
-Add entries to `customizations.json` for: `plugins/password/drivers/zoho_broker.php`, `services/password-broker/`, the password block in `config/config.inc.php`, and the broker compose service. Match the file's existing JSON shape.
+Add entries to `customizations.json` for: `plugins/password/drivers/zoho_broker.php`,
+`services/password-broker/`, the password block in `config/config.inc.php`, and
+`deploy/stack.reference.yml`. Match the file's existing JSON shape.
 
-- [ ] **Step 5: Verify JSON + shell**
+- [ ] **Step 5: Verify JSON + shell + YAML**
 
-Run: `python3 -m json.tool customizations.json > /dev/null && bash -n scripts/build-push.sh`
-Expected: no output (both valid).
+Run: `python3 -m json.tool customizations.json > /dev/null && bash -n scripts/build-push.sh && python3 -c "import yaml,sys; yaml.safe_load(open('deploy/stack.reference.yml'))"`
+Expected: no output (all valid).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/build-push.sh customizations.json docker-compose.yml
-git commit -m "build: ship password-broker image + compose service"
+git add scripts/build-push.sh deploy/stack.reference.yml customizations.json
+git commit -m "build: ship password-broker image + reference stack"
 ```
 
 ---
@@ -968,14 +1098,25 @@ git commit -m "build: ship password-broker image + compose service"
 
 **Files:** none (verification).
 
-- [ ] **Step 1: Set up a Zoho Self Client**
+- [ ] **Step 1: Set up a Zoho Self Client per client org**
 
-In `api-console.zoho.com` → Self Client → scopes `ZohoMail.organization.accounts.READ,ZohoMail.organization.accounts.UPDATE` → generate code → exchange for a refresh token. Record `ZOHO_*` values + `ZOHO_ZOID`.
+For **each** client's Zoho org (you are admin in each): `api-console.zoho.com` → Self Client →
+scopes `ZohoMail.organization.accounts.READ,ZohoMail.organization.accounts.UPDATE` → generate
+code → exchange for a refresh token. Record `{clientId, clientSecret, refreshToken, zoid}` and
+the client's email domain. Assemble the `ZOHO_TENANTS` JSON map (one entry per domain):
 
-- [ ] **Step 2: Boot the stack locally with broker**
+```json
+{"client-a.com":{"clientId":"...","clientSecret":"...","refreshToken":"...","zoid":"111"},
+ "client-b.com":{"clientId":"...","clientSecret":"...","refreshToken":"...","zoid":"222"}}
+```
 
-Run: `docker compose up -d` (with all env vars set incl. `BROKER_SHARED_SECRET`, `ZOHO_*`).
-Expected: `broker` logs `password-broker listening on 9000`; not reachable from host (no published port).
+- [ ] **Step 2: Update the Portainer stack (manual)**
+
+In Portainer, edit the roundcube stack from `deploy/stack.reference.yml`: add the `broker`
+service, the two `AVUZ_BROKER_*` env vars on `roundcube`, and `depends_on: broker`. Add stack
+env vars: `AVUZ_BROKER_SECRET` (generate `openssl rand -base64 32 | tr -d '='`) and
+`ZOHO_TENANTS` (the JSON map from Step 1, as a single-line string). Redeploy.
+Expected: `broker` logs `password-broker listening on 9000`; broker has no published port.
 
 - [ ] **Step 3: Verify gating — non-Zoho session shows no Password tab**
 

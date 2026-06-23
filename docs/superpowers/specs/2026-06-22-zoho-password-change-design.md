@@ -23,11 +23,20 @@ user logs into avuz conecta and (manually) aligns the same password for SSO.
 
 ## Key decisions (from design grilling)
 
-- **Zoho org topology: single org.** All client mailboxes are users under one Zoho
-  organization. → one admin token, one broker.
-- **Org-admin token must NOT live in Roundcube.** Roundcube is internet-facing and renders
-  hostile email HTML; an RCE/LFI there would leak an org-wide key. The token lives in a
-  separate **password-broker** container, not internet-published.
+- **Zoho org topology: one org per client.** Each client is a separate Zoho organization
+  (own ZOID, own admin). Avuz is admin in each → can mint a per-org Self Client
+  (clientId/secret/refresh token) per client.
+- **Broker resolves Zoho creds by email domain.** It holds a static
+  `domain → {clientId, clientSecret, refreshToken, zoid}` map. Few clients, slow growth →
+  static map (new client = add entry + redeploy broker). The lookup sits behind one
+  resolver function so it can later swap to a dynamic store without changing the flow.
+- **Only token + zoid are per-domain.** IMAP current-password verification is unchanged:
+  every Zoho org (custom domains included) uses `imap.zoho.com`.
+- **Org-admin tokens must NOT live in Roundcube.** Roundcube is internet-facing and renders
+  hostile email HTML; an RCE/LFI there would leak the keys. All tenant creds live in the
+  separate **password-broker** container, not internet-published. The broker now holds every
+  client's org token → bigger crown jewel, but still isolated from Roundcube and still gated
+  per-reset by current-password verification.
 - **Least privilege scope:** `ZohoMail.organization.accounts.READ` +
   `ZohoMail.organization.accounts.UPDATE` (not `.ALL`).
 - **Broker verifies the current password before any reset** (IMAP login as that user) +
@@ -68,7 +77,8 @@ Sources:
   provider key. NOT per-tenant.
 - **avuz-server / Nextcloud is per-tenant**, talks to the shared Roundcube via SSO only;
   never touches the broker.
-- **One broker for the whole platform** → exactly one copy of the org token, one container.
+- **One broker for the whole platform**, holding the per-client Zoho creds map. One
+  container, resolves the right org by email domain per request.
 
 ## Architecture
 
@@ -92,15 +102,18 @@ Browser ──(HTTPS)──> Roundcube (internet-facing, no Zoho secret)
   its own Dockerfile. Built into its own image, run as its own compose service alongside
   `roundcube` and `redis`. The container split is the security boundary; source stays in one
   repo.
-- Holds `ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN/ZOID` + `BROKER_SHARED_SECRET`. **No `ports:`
-  mapping** — reachable only on the internal compose network (`broker:9000`).
+- Holds `ZOHO_TENANTS` (JSON map `domain → {clientId, clientSecret, refreshToken, zoid}`) +
+  `BROKER_SHARED_SECRET` + `ZOHO_IMAP_HOST/PORT`. **No `ports:` mapping** — reachable only on
+  the internal compose network (`broker:9000`).
 - Single endpoint `POST /reset` with `{ email, current_pass, new_pass }`, header
   `X-Broker-Secret: <BROKER_SHARED_SECRET>`.
-- Steps: check shared secret → verify `current_pass` via IMAP login to Zoho as `email` →
-  on success obtain Zoho access token from refresh token (cached, ~1h) → resolve `zuid` by
-  paging org users → `PUT` reset to `new_pass`.
-- Returns `200 {ok:true}` / mapped error: `401` bad shared secret, `403` wrong current pass,
-  `404` account not found, `502` Zoho upstream error. Logs with secrets truncated.
+- Steps: check shared secret → resolve tenant by email domain (unknown domain → `422`) →
+  verify `current_pass` via IMAP login to Zoho as `email` → obtain that org's access token
+  from its refresh token (cached per domain, ~1h) → resolve `zuid` by paging that org's
+  users → `PUT` reset to `new_pass`.
+- Returns `200 {ok:true}` / mapped error: `401` bad shared secret, `422` unknown tenant
+  domain, `403` wrong current pass, `404` account not found, `502` Zoho upstream error. Logs
+  with secrets truncated.
 
 **2. `plugins/password/drivers/zoho_broker.php` — Roundcube password driver (new)**
 - Implements `rcube_password::save($currpass, $newpass, $username)`.
@@ -154,12 +167,17 @@ password-broker container (env):
 
 | Var | Purpose |
 |-----|---------|
-| `ZOHO_CLIENT_ID` | Self Client id |
-| `ZOHO_CLIENT_SECRET` | Self Client secret |
-| `ZOHO_REFRESH_TOKEN` | OAuth refresh token (scopes: accounts.READ + accounts.UPDATE) |
-| `ZOHO_ZOID` | Zoho organization id |
+| `ZOHO_TENANTS` | JSON map `domain → {clientId, clientSecret, refreshToken, zoid}` (refresh-token scopes: accounts.READ + accounts.UPDATE), one entry per client org |
 | `BROKER_SHARED_SECRET` | Shared secret Roundcube must present |
+| `ZOHO_IMAP_HOST` | IMAP host for current-password verify (default `imap.zoho.com`) |
+| `ZOHO_IMAP_PORT` | IMAP port (default `993`) |
 | `PORT` | Listen port (default 9000) |
+
+`ZOHO_TENANTS` example:
+```json
+{"client-a.com":{"clientId":"...","clientSecret":"...","refreshToken":"...","zoid":"111"},
+ "client-b.com":{"clientId":"...","clientSecret":"...","refreshToken":"...","zoid":"222"}}
+```
 
 ## Compose (broker as a third service)
 
@@ -180,11 +198,10 @@ services:
     restart: unless-stopped
     # NO ports: — internal compose network only
     environment:
-      - ZOHO_CLIENT_ID=$ZOHO_CLIENT_ID
-      - ZOHO_CLIENT_SECRET=$ZOHO_CLIENT_SECRET
-      - ZOHO_REFRESH_TOKEN=$ZOHO_REFRESH_TOKEN
-      - ZOHO_ZOID=$ZOHO_ZOID
+      - ZOHO_TENANTS=$ZOHO_TENANTS
       - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
+      - ZOHO_IMAP_HOST=imap.zoho.com
+      - ZOHO_IMAP_PORT=993
       - PORT=9000
 ```
 
@@ -195,7 +212,8 @@ services:
 ```
 temp pw → IMAP login OK (storage_host = zoho) → user_create sets newuserpassword pref
   → native init redirect bounces all but plugin.password → user enters current + new pass
-  → zoho_broker driver → broker: shared-secret → verify current (IMAP) → resolve zuid → Zoho PUT reset
+  → zoho_broker driver → broker: shared-secret → resolve tenant by email domain
+    → verify current (IMAP) → that org's token → resolve zuid → Zoho PUT reset
   → 200 → PASSWORD_SUCCESS → native clears flag + in-place session pw update → normal mail
 ```
 
@@ -225,6 +243,13 @@ temp pw → IMAP login OK (storage_host = zoho) → user_create sets newuserpass
   `customizations.json` and the build/compose setup. Upstream rebases don't touch it.
 - Password-plugin config lives in `config/config.inc.php` (already tracked) → note in
   `customizations.json`.
+
+## Per-client onboarding prerequisite
+
+IMAP access must be enabled in each client's Zoho org (org-level "enable IMAP for all users")
+so a fresh mailbox can IMAP-login with the admin-set temp password before any web login. The
+forced-change flow and the broker's current-password verification both depend on it. Verified
+in plan Task 0 before any code.
 
 ## Open items to verify during planning/implementation
 
