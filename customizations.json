@@ -54,7 +54,7 @@
       ],
       "description": "Two-stage Docker build (base + app). PHP 8.2 FPM + Nginx + Supervisor. Entrypoint initializes DB schema on first boot. Multi-platform build scripts (arm64 local, amd64 staging/prod).",
       "risk": "low",
-      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change. scripts/build-push.sh also builds/pushes the avuz-password-broker image using the same registry/org/env/platform/push logic — see deploy/stack.reference.yml for the runtime topology. portainer-stack.yml at repo root predates the broker service and is stale; deploy/stack.reference.yml is now the source of truth."
+      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change. scripts/build-push.sh also builds/pushes the avuz-password-broker image using the same registry/org/env/platform/push logic — see deploy/stack.reference.yml for the runtime topology. portainer-stack.yml has been removed; deploy/stack.reference.yml is now the single source of truth (push via 10.50.100.103:8080, pull via registry.avuz.app — same registry)."
     },
     {
       "id": "zoho-broker-driver",

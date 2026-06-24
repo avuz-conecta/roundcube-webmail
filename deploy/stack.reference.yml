@@ -1,4 +1,5 @@
-# Reference copy of the Portainer stack. Portainer is hand-edited; keep this in sync.
+# Single source of truth for the Portainer stack (Portainer is hand-edited; keep this in sync).
+# Push to the registry via 10.50.100.103:8080 (build-push.sh); Portainer pulls via registry.avuz.app — same registry.
 version: '3.8'
 
 services:
