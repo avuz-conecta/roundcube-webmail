@@ -64,7 +64,19 @@ $config['plugins'] = [
     'archive',
     'zipdownload',
     'managesieve',
+    'password',
 ];
+
+// -- Password change (Zoho via internal broker) --
+$config['password_driver']           = 'zoho_broker';
+$config['password_force_new_user']   = true;
+$config['password_confirm_current']  = true;
+$config['password_minimum_length']   = 8;
+$config['password_strength_driver']  = 'zxcvbn';
+$config['password_minimum_score']    = 2;
+$config['password_hosts']            = ['ssl://imap.zoho.com', 'ssl://imap.zoho.com:993'];
+$config['avuz_broker_url']           = getenv('AVUZ_BROKER_URL') ?: 'http://broker:9000';
+$config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 
 // -- Skin --
 $config['skin'] = 'avuz';
