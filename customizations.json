@@ -54,7 +54,47 @@
       ],
       "description": "Two-stage Docker build (base + app). PHP 8.2 FPM + Nginx + Supervisor. Entrypoint initializes DB schema on first boot. Multi-platform build scripts (arm64 local, amd64 staging/prod).",
       "risk": "low",
-      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change."
+      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change. scripts/build-push.sh also builds/pushes the avuz-password-broker image using the same registry/org/env/platform/push logic — see deploy/stack.reference.yml for the runtime topology. portainer-stack.yml at repo root predates the broker service and is stale; deploy/stack.reference.yml is now the source of truth."
+    },
+    {
+      "id": "zoho-broker-driver",
+      "type": "plugin",
+      "paths": [
+        "plugins/password/drivers/zoho_broker.php"
+      ],
+      "description": "Custom password driver for the core 'password' plugin. Forwards change-password requests to the internal avuz-password-broker service over HTTP (POST /reset, X-Broker-Secret header) instead of talking to Zoho directly. Roundcube never holds Zoho org/API secrets.",
+      "risk": "medium",
+      "notes": "Depends on the broker service being reachable at $config['avuz_broker_url'] and sharing $config['avuz_broker_secret']. If the broker is down, password changes fail with PASSWORD_CONNECT_ERROR but login/mail flow is unaffected."
+    },
+    {
+      "id": "password-broker-service",
+      "type": "service",
+      "paths": [
+        "services/password-broker/"
+      ],
+      "description": "Standalone Node/TypeScript service (Express-style HTTP server) that verifies a user's current password over IMAP against Zoho, then resets it via the Zoho Mail Admin API using per-tenant OAuth credentials. Built/pushed as its own Docker image (avuz-password-broker) by scripts/build-push.sh.",
+      "risk": "medium",
+      "notes": "Holds Zoho org client_id/client_secret/refresh_token per tenant in ZOHO_TENANTS (JSON). Shares BROKER_SHARED_SECRET with Roundcube's avuz_broker_secret. No published ports — reachable only on the internal compose/Portainer network as 'broker'."
+    },
+    {
+      "id": "roundcube-config-password-block",
+      "type": "config",
+      "paths": [
+        "config/config.inc.php"
+      ],
+      "description": "Password-change config block in config/config.inc.php: enables the core 'password' plugin with password_driver='zoho_broker', zxcvbn strength checking (min score 2, min length 8), and the avuz_broker_url/avuz_broker_secret pair read from env.",
+      "risk": "low",
+      "notes": "Part of the same config/config.inc.php covered by the 'roundcube-config' entry; called out separately because it wires the new broker dependency. AVUZ_BROKER_URL defaults to http://broker:9000 if unset."
+    },
+    {
+      "id": "deploy-stack-reference",
+      "type": "docker",
+      "paths": [
+        "deploy/stack.reference.yml"
+      ],
+      "description": "In-repo reference copy of the hand-edited Portainer stack: roundcube + redis + broker services, their env vars, volumes, and depends_on wiring. Not deployed directly — Portainer is edited by hand and should be kept in sync with this file.",
+      "risk": "low",
+      "notes": "Source of truth for intended topology since there is no git-backed docker-compose deploy. Update this file whenever the live Portainer stack changes, and vice versa."
     }
   ]
 }

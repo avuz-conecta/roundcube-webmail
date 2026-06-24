@@ -5,6 +5,7 @@ REGISTRY="10.50.100.103:8080"
 ORG="admin"
 IMAGE_NAME="avuz-roundcube"
 BASE_IMAGE_NAME="avuz-roundcube-base"
+BROKER_IMAGE_NAME="avuz-password-broker"
 VERSION=${1:-latest}
 ENV=${2:-local}
 
@@ -15,6 +16,8 @@ case $ENV in
     IMAGE_TAG="${IMAGE_NAME}:${VERSION}"
     IMAGE_TAG_LATEST="${IMAGE_NAME}:latest"
     BASE_IMAGE="${BASE_IMAGE_NAME}:latest"
+    BROKER_IMAGE_TAG="${BROKER_IMAGE_NAME}:${VERSION}"
+    BROKER_IMAGE_TAG_LATEST="${BROKER_IMAGE_NAME}:latest"
     ;;
   staging)
     PLATFORM="linux/amd64"
@@ -22,6 +25,8 @@ case $ENV in
     IMAGE_TAG="${REGISTRY}/${ORG}/${IMAGE_NAME}:staging"
     IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${IMAGE_NAME}:staging"
     BASE_IMAGE="${REGISTRY}/${ORG}/${BASE_IMAGE_NAME}:staging"
+    BROKER_IMAGE_TAG="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:staging"
+    BROKER_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:staging"
     ;;
   prod)
     PLATFORM="linux/amd64"
@@ -29,6 +34,8 @@ case $ENV in
     IMAGE_TAG="${REGISTRY}/${ORG}/${IMAGE_NAME}:${VERSION}"
     IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${IMAGE_NAME}:latest"
     BASE_IMAGE="${REGISTRY}/${ORG}/${BASE_IMAGE_NAME}:latest"
+    BROKER_IMAGE_TAG="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:${VERSION}"
+    BROKER_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:latest"
     ;;
   *)
     echo "Usage: $0 [version] [local|staging|prod]"
@@ -58,4 +65,26 @@ if [ "$PUSH" = true ]; then
   docker push ${IMAGE_TAG}
   docker push ${IMAGE_TAG_LATEST}
   echo "✓ Pushed ${IMAGE_TAG_LATEST}"
+fi
+
+echo "==========================================="
+echo "Building BROKER image"
+echo "  Image:    ${BROKER_IMAGE_TAG}"
+echo "  Platform: ${PLATFORM}"
+echo "  Push:     ${PUSH}"
+echo "==========================================="
+
+docker buildx build \
+  --platform ${PLATFORM} \
+  -t ${BROKER_IMAGE_TAG} \
+  -t ${BROKER_IMAGE_TAG_LATEST} \
+  --load \
+  services/password-broker
+
+echo "✓ Build completed: ${BROKER_IMAGE_TAG_LATEST}"
+
+if [ "$PUSH" = true ]; then
+  docker push ${BROKER_IMAGE_TAG}
+  docker push ${BROKER_IMAGE_TAG_LATEST}
+  echo "✓ Pushed ${BROKER_IMAGE_TAG_LATEST}"
 fi

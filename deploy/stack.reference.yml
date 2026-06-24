@@ -1,0 +1,47 @@
+# Reference copy of the Portainer stack. Portainer is hand-edited; keep this in sync.
+version: '3.8'
+
+services:
+  roundcube:
+    image: registry.avuz.app/admin/avuz-roundcube:staging
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - redis
+      - broker
+    volumes:
+      - roundcube_temp:/var/www/roundcube/temp
+      - roundcube_logs:/var/www/roundcube/logs
+    environment:
+      - ROUNDCUBE_DB_DSN=
+      - ROUNDCUBE_DES_KEY=$ROUNDCUBE_DES_KEY
+      - ROUNDCUBE_SSO_SECRET=$ROUNDCUBE_SSO_SECRET
+      - ROUNDCUBE_CREDENTIAL_KEY=$ROUNDCUBE_CREDENTIAL_KEY
+      - AVUZ_BROKER_URL=http://broker:9000
+      - AVUZ_BROKER_SECRET=$AVUZ_BROKER_SECRET
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  broker:
+    image: registry.avuz.app/admin/avuz-password-broker:staging
+    restart: unless-stopped
+    # NO ports — internal compose network only
+    environment:
+      - PORT=9000
+      - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
+      - ZOHO_TENANTS=$ZOHO_TENANTS
+      - ZOHO_IMAP_HOST=imap.zoho.com
+      - ZOHO_IMAP_PORT=993
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - roundcube_redis:/data
+
+volumes:
+  roundcube_temp:
+  roundcube_logs:
+  roundcube_redis:
