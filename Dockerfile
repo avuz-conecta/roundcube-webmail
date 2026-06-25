@@ -20,6 +20,7 @@ RUN curl -sL "https://github.com/roundcube/roundcubemail/releases/download/${RC_
 # Overlay our customizations on top of the release
 COPY config/config.inc.php /var/www/roundcube/config/config.inc.php
 COPY plugins/nextcloud_sso /var/www/roundcube/plugins/nextcloud_sso
+COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
 COPY skins/avuz /var/www/roundcube/skins/avuz
 
 # Set permissions
