@@ -29,4 +29,22 @@ describe("broker server", () => {
     const response = await post(createServer(okDeps), { "x-broker-secret": "secret" }, { email: "a@b.com", currentPass: "x", newPass: "y" });
     expect(response.status).toBe(200);
   });
+
+  test("accepts the camelCase wire payload sent by the PHP driver", async () => {
+    const response = await post(
+      createServer(okDeps),
+      { "x-broker-secret": "secret" },
+      { email: "a@b.com", currentPass: "current-secret", newPass: "new-secret" },
+    );
+    expect(response.status).toBe(200);
+  });
+
+  test("rejects a snake_case payload with 400", async () => {
+    const response = await post(
+      createServer(okDeps),
+      { "x-broker-secret": "secret" },
+      { email: "a@b.com", current_pass: "current-secret", new_pass: "new-secret" },
+    );
+    expect(response.status).toBe(400);
+  });
 });

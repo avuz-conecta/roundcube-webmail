@@ -10,13 +10,26 @@ const defaultConnect: ImapConnect = async (opts) => {
   return { logout: () => client.logout() };
 };
 
+const isAuthenticationFailure = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as Record<string, unknown>).authenticationFailed === true;
+};
+
 export const verifyImapPassword = async (deps: VerifyDeps, email: string, password: string): Promise<boolean> => {
   const connect = deps.connect ?? defaultConnect;
+
+  let client: ImapClient;
   try {
-    const client = await connect({ host: deps.host, port: deps.port, secure: true, auth: { user: email, pass: password } });
-    await client.logout();
-    return true;
-  } catch {
-    return false;
+    client = await connect({ host: deps.host, port: deps.port, secure: true, auth: { user: email, pass: password } });
+  } catch (error) {
+    if (isAuthenticationFailure(error)) return false;
+    throw error;
   }
+
+  try {
+    await client.logout();
+  } catch {
+    // connect() already succeeded, so the password is valid; logout failure is irrelevant.
+  }
+  return true;
 };

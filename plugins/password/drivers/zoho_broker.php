@@ -40,7 +40,7 @@ class rcube_zoho_broker_password
             $client = password::get_http_client();
             $response = $client->post($url . '/reset', [
                 'headers' => ['X-Broker-Secret' => $secret],
-                'json'    => ['email' => $username, 'current_pass' => $curpass, 'new_pass' => $newpass],
+                'json'    => ['email' => $username, 'currentPass' => $curpass, 'newPass' => $newpass],
                 'http_errors' => false,
             ]);
 
