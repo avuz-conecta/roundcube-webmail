@@ -74,7 +74,7 @@ $config['password_confirm_current']  = true;
 $config['password_minimum_length']   = 8;
 $config['password_strength_driver']  = 'zxcvbn';
 $config['password_minimum_score']    = 2;
-$config['password_hosts']            = ['ssl://imap.zoho.com', 'ssl://imap.zoho.com:993'];
+$config['password_hosts']            = ['imap.zoho.com']; // matches $_SESSION['storage_host'] (bare hostname, no scheme/port)
 $config['avuz_broker_url']           = getenv('AVUZ_BROKER_URL') ?: 'http://broker:9000';
 $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 
