@@ -21,7 +21,10 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
 
     await deps.reset(org, zuid, input.newPass);
     return { status: 200, body: { ok: true } };
-  } catch {
+  } catch (error) {
+    // Log the cause (no secrets in these messages) so a 502 isn't a black box.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`reset failed for ${input.email}: ${reason}`);
     return { status: 502, body: { ok: false, error: "upstream error" } };
   }
 };

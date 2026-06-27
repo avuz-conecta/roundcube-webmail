@@ -17,12 +17,18 @@ export const findZuidByEmail = async (deps: AccountsDeps, email: string): Promis
     const response = await fetchImpl(url, { headers: await authHeaders(deps) });
     if (!response.ok) throw new Error(`zoho users http ${response.status}`);
 
-    const json = (await response.json()) as { data?: Array<{ zuid: string; emailAddress: string }> };
+    // Zoho returns emailAddress as an array of { mailId, isPrimary, ... } and
+    // zuid as a number. Match any mailId on the account; return zuid as a string.
+    const json = (await response.json()) as {
+      data?: Array<{ zuid: number | string; emailAddress?: Array<{ mailId: string }> }>;
+    };
     const users = json.data ?? [];
     if (users.length === 0) return null;
 
-    const match = users.find((user) => user.emailAddress.toLowerCase() === target);
-    if (match) return match.zuid;
+    const match = users.find((user) =>
+      (user.emailAddress ?? []).some((entry) => entry.mailId.toLowerCase() === target)
+    );
+    if (match) return String(match.zuid);
   }
 };
 
