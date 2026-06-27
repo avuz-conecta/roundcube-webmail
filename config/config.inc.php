@@ -72,8 +72,11 @@ $config['password_driver']           = 'zoho_broker';
 $config['password_force_new_user']   = true;
 $config['password_confirm_current']  = true;
 $config['password_minimum_length']   = 8;
-$config['password_strength_driver']  = 'zxcvbn';
-$config['password_minimum_score']    = 2;
+// zxcvbn strength driver disabled: the bjeavons/zxcvbn-php lib isn't in the image,
+// so it returns no score and rejects every password as "too weak". Length + Zoho's
+// own complexity policy (enforced on the reset) cover strength. Re-enable only if the
+// lib is added to the base image.
+$config['password_strength_driver']  = null;
 $config['password_hosts']            = ['imap.zoho.com']; // matches $_SESSION['storage_host'] (bare hostname, no scheme/port)
 $config['avuz_broker_url']           = getenv('AVUZ_BROKER_URL') ?: 'http://broker:9000';
 $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
