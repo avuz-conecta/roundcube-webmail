@@ -1,7 +1,7 @@
 import { loadConfig, resolveTenant, type ZohoOrg } from "./config.js";
 import { createServer } from "./server.js";
 import { createTokenProvider } from "./zoho-token.js";
-import { findAccountIdByEmail, resetZohoPassword } from "./zoho-accounts.js";
+import { findAccountByEmail, resetZohoPassword } from "./zoho-accounts.js";
 import { verifyImapPassword } from "./verify-password.js";
 import { createResetPassword } from "./reset.js";
 
@@ -20,8 +20,8 @@ const accountsDepsFor = (org: ZohoOrg) => {
 const resetPassword = createResetPassword({
   resolveOrg: (email) => resolveTenant(config.tenants, email),
   verify: (email, pass) => verifyImapPassword(config.imap, email, pass),
-  findAccountId: (org, email) => findAccountIdByEmail(accountsDepsFor(org), email),
-  reset: (org, accountId, newPass) => resetZohoPassword(accountsDepsFor(org), accountId, newPass),
+  findAccount: (org, email) => findAccountByEmail(accountsDepsFor(org), email),
+  reset: (org, account, newPass) => resetZohoPassword(accountsDepsFor(org), account, newPass),
 });
 
 createServer({ sharedSecret: config.sharedSecret, resetPassword }).listen(config.port, () => {

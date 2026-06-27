@@ -8,10 +8,11 @@ const authHeaders = async (deps: AccountsDeps): Promise<Record<string, string>> 
   "Content-Type": "application/json",
 });
 
-// Zoho's reset endpoint keys the account by accountId (the long numeric string),
-// NOT zuid. Passing zuid in the path yields 400 "zuid is null". So we look up and
-// return the accountId.
-export const findAccountIdByEmail = async (deps: AccountsDeps, email: string): Promise<string | null> => {
+// Zoho's reset needs the accountId in the path AND the zuid in the body — passing
+// zuid in the path with no body zuid returns 400 "zuid is null". So we look up both.
+export type ZohoAccount = { accountId: string; zuid: number };
+
+export const findAccountByEmail = async (deps: AccountsDeps, email: string): Promise<ZohoAccount | null> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const target = email.toLowerCase();
 
@@ -24,7 +25,7 @@ export const findAccountIdByEmail = async (deps: AccountsDeps, email: string): P
 
     // emailAddress is an array of { mailId, isPrimary, ... }; match any mailId.
     const json = (await response.json()) as {
-      data?: Array<{ accountId: string; emailAddress?: Array<{ mailId: string }> }>;
+      data?: Array<{ accountId: string; zuid: number; emailAddress?: Array<{ mailId: string }> }>;
     };
     const users = json.data ?? [];
     if (users.length === 0) return null;
@@ -32,17 +33,17 @@ export const findAccountIdByEmail = async (deps: AccountsDeps, email: string): P
     const match = users.find((user) =>
       (user.emailAddress ?? []).some((entry) => entry.mailId.toLowerCase() === target)
     );
-    if (match) return match.accountId;
+    if (match) return { accountId: match.accountId, zuid: match.zuid };
   }
 };
 
-export const resetZohoPassword = async (deps: AccountsDeps, accountId: string, newPass: string): Promise<void> => {
+export const resetZohoPassword = async (deps: AccountsDeps, account: ZohoAccount, newPass: string): Promise<void> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const url = `${BASE}/${deps.zoid}/accounts/${accountId}`;
+  const url = `${BASE}/${deps.zoid}/accounts/${account.accountId}`;
   const response = await fetchImpl(url, {
     method: "PUT",
     headers: await authHeaders(deps),
-    body: JSON.stringify({ password: newPass, mode: "resetPassword" }),
+    body: JSON.stringify({ password: newPass, mode: "resetPassword", zuid: account.zuid }),
   });
   if (!response.ok) {
     throw new Error(`zoho reset http ${response.status}: ${(await response.text()).slice(0, 300)}`);
