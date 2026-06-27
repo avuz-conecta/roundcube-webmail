@@ -15,7 +15,9 @@ export const findZuidByEmail = async (deps: AccountsDeps, email: string): Promis
   for (let start = 0; ; start += PAGE_SIZE) {
     const url = `${BASE}/${deps.zoid}/accounts?start=${start}&limit=${PAGE_SIZE}`;
     const response = await fetchImpl(url, { headers: await authHeaders(deps) });
-    if (!response.ok) throw new Error(`zoho users http ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`zoho users http ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    }
 
     // Zoho returns emailAddress as an array of { mailId, isPrimary, ... } and
     // zuid as a number. Match any mailId on the account; return zuid as a string.
@@ -40,5 +42,7 @@ export const resetZohoPassword = async (deps: AccountsDeps, zuid: string, newPas
     headers: await authHeaders(deps),
     body: JSON.stringify({ password: newPass, mode: "resetPassword" }),
   });
-  if (!response.ok) throw new Error(`zoho reset http ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`zoho reset http ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  }
 };
