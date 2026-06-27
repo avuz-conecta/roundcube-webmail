@@ -4,8 +4,8 @@ import type { ResetInput, ResetResult } from "./server.js";
 export type ResetDeps = {
   resolveOrg: (email: string) => ZohoOrg | null;
   verify: (email: string, pass: string) => Promise<boolean>;
-  findZuid: (org: ZohoOrg, email: string) => Promise<string | null>;
-  reset: (org: ZohoOrg, zuid: string, newPass: string) => Promise<void>;
+  findAccountId: (org: ZohoOrg, email: string) => Promise<string | null>;
+  reset: (org: ZohoOrg, accountId: string, newPass: string) => Promise<void>;
 };
 
 export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Promise<ResetResult>) => async (input) => {
@@ -16,10 +16,10 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
     const valid = await deps.verify(input.email, input.currentPass);
     if (!valid) return { status: 403, body: { ok: false, error: "current password incorrect" } };
 
-    const zuid = await deps.findZuid(org, input.email);
-    if (zuid === null) return { status: 404, body: { ok: false, error: "account not found" } };
+    const accountId = await deps.findAccountId(org, input.email);
+    if (accountId === null) return { status: 404, body: { ok: false, error: "account not found" } };
 
-    await deps.reset(org, zuid, input.newPass);
+    await deps.reset(org, accountId, input.newPass);
     return { status: 200, body: { ok: true } };
   } catch (error) {
     // Log the cause (no secrets in these messages) so a 502 isn't a black box.

@@ -8,7 +8,10 @@ const authHeaders = async (deps: AccountsDeps): Promise<Record<string, string>> 
   "Content-Type": "application/json",
 });
 
-export const findZuidByEmail = async (deps: AccountsDeps, email: string): Promise<string | null> => {
+// Zoho's reset endpoint keys the account by accountId (the long numeric string),
+// NOT zuid. Passing zuid in the path yields 400 "zuid is null". So we look up and
+// return the accountId.
+export const findAccountIdByEmail = async (deps: AccountsDeps, email: string): Promise<string | null> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const target = email.toLowerCase();
 
@@ -19,10 +22,9 @@ export const findZuidByEmail = async (deps: AccountsDeps, email: string): Promis
       throw new Error(`zoho users http ${response.status}: ${(await response.text()).slice(0, 300)}`);
     }
 
-    // Zoho returns emailAddress as an array of { mailId, isPrimary, ... } and
-    // zuid as a number. Match any mailId on the account; return zuid as a string.
+    // emailAddress is an array of { mailId, isPrimary, ... }; match any mailId.
     const json = (await response.json()) as {
-      data?: Array<{ zuid: number | string; emailAddress?: Array<{ mailId: string }> }>;
+      data?: Array<{ accountId: string; emailAddress?: Array<{ mailId: string }> }>;
     };
     const users = json.data ?? [];
     if (users.length === 0) return null;
@@ -30,13 +32,13 @@ export const findZuidByEmail = async (deps: AccountsDeps, email: string): Promis
     const match = users.find((user) =>
       (user.emailAddress ?? []).some((entry) => entry.mailId.toLowerCase() === target)
     );
-    if (match) return String(match.zuid);
+    if (match) return match.accountId;
   }
 };
 
-export const resetZohoPassword = async (deps: AccountsDeps, zuid: string, newPass: string): Promise<void> => {
+export const resetZohoPassword = async (deps: AccountsDeps, accountId: string, newPass: string): Promise<void> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const url = `${BASE}/${deps.zoid}/accounts/${zuid}`;
+  const url = `${BASE}/${deps.zoid}/accounts/${accountId}`;
   const response = await fetchImpl(url, {
     method: "PUT",
     headers: await authHeaders(deps),

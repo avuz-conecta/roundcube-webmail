@@ -6,7 +6,7 @@ const org: ZohoOrg = { clientId: "i", clientSecret: "s", refreshToken: "r", zoid
 const createBase = () => ({
   resolveOrg: (_email: string): ZohoOrg | null => org,
   verify: vi.fn(async () => true),
-  findZuid: vi.fn(async () => "7"),
+  findAccountId: vi.fn(async () => "7"),
   reset: vi.fn(async () => {}),
 });
 const input = { email: "a@x.com", currentPass: "cur", newPass: "new" };
@@ -31,7 +31,7 @@ describe("reset flow", () => {
   });
 
   test("404 when account not found", async () => {
-    const run = createResetPassword({ ...createBase(), findZuid: vi.fn(async () => null) });
+    const run = createResetPassword({ ...createBase(), findAccountId: vi.fn(async () => null) });
     expect((await run(input)).status).toBe(404);
   });
 
