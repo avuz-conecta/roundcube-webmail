@@ -93,26 +93,49 @@ input[type="radio"]:checked + label::before {
 }
 
 /* === Login page — ConectaMail mockup === */
-#login-form {
+.task-login #layout {
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+
+.task-login #layout-content {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 440px;
   background: #fff;
   border-radius: 28px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.06);
   padding: 48px 40px;
-  max-width: 440px;
-  margin: 0 auto;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .task-login #logo {
   display: block;
-  position: relative;
-  top: 0;
+  position: static;
   margin: 0 auto 32px;
   max-width: 220px;
   height: auto;
 }
 
-#rcmloginuser,
-#rcmloginpwd {
+.task-login #login-form {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  position: static;
+  top: auto;
+}
+
+.task-login #rcmloginuser,
+.task-login #rcmloginpwd {
   background-color: #ededed;
   border: none;
   border-radius: 22px;
@@ -121,14 +144,14 @@ input[type="radio"]:checked + label::before {
   box-shadow: none;
 }
 
-#rcmloginuser:focus,
-#rcmloginpwd:focus {
+.task-login #rcmloginuser:focus,
+.task-login #rcmloginpwd:focus {
   background-color: #e8e8e8;
   border: none;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
 }
 
-#rcmloginsubmit {
+.task-login #rcmloginsubmit {
   background-color: #000 !important;
   border-color: #000 !important;
   color: #fff !important;
@@ -138,13 +161,13 @@ input[type="radio"]:checked + label::before {
   padding: 14px 0;
 }
 
-#rcmloginsubmit:hover {
+.task-login #rcmloginsubmit:hover {
   background-color: #222 !important;
   border-color: #222 !important;
   color: #fff !important;
 }
 
-#login-footer {
+.task-login #login-footer {
   color: #9a9a9a;
   text-align: center;
   margin-top: 24px;
