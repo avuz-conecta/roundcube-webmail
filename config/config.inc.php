@@ -86,6 +86,7 @@ $config['skin'] = 'avuz';
 $config['dont_override'] = ['skin'];
 $config['skin_logo'] = [
     ''             => '/skins/avuz/images/icon.png',
+    'login'        => '/skins/avuz/images/login-logo.png',
     '[favicon]'    => '/skins/avuz/images/favicon.ico',
     '[small]'      => '/skins/avuz/images/icon.png',
     '[dark]'       => '/skins/avuz/images/icon.png',
