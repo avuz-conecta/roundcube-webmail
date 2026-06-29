@@ -66,17 +66,6 @@ input[type="radio"]:checked + label::before {
   border-color: #2bb5e3;
 }
 
-#login-form {
-  background: #fff;
-  border-radius: 25px;
-  box-shadow: 0 4px 24px rgba(43, 181, 227, 0.10);
-}
-
-#login-form input:focus {
-  border-color: #2bb5e3;
-  box-shadow: 0 0 0 2px rgba(43, 181, 227, 0.15);
-}
-
 #header {
   background-color: #2bb5e3;
 }
