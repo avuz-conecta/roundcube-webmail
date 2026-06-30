@@ -1,107 +1,158 @@
-# Roundcube Latency Optimization — Design
+# Roundcube Latency Optimization — Design (v2)
 
 **Date**: 2026-06-30
 **Branch**: avuz-customization
-**Status**: approved scope, pending implementation
+**Status**: approved diagnosis, design for review
 
-## Context
+## What changed from v1
 
-A latency guide (Zoho IMAP/SMTP) was proposed. Most of it targets a custom
-stateful IMAP client (Python imaplib): persistent IDLE sockets, SMTP connection
-pooling, pipelining. Roundcube is PHP / PHP-FPM — stateless, one IMAP+SMTP
-lifecycle per HTTP request. Those points do not apply:
+v1 proposed OPcache + gzip + refresh_interval. **Staging evidence killed it.**
+An `imap_debug` trace of a single message open proved the cost is per-request
+IMAP **connect + TLS + AUTHENTICATE + SELECT** round-trips to Zoho-US, not PHP
+compile time or asset size.
 
-| Guide point | Verdict |
-|---|---|
-| Regional server | imap.zoho.com = US; no closer DC for BR. Nothing to do. |
-| Persistent IMAP IDLE | Impossible in PHP-FPM (connection dies each request). |
-| SMTP connection pooling | Impossible — per-request lifecycle. |
-| Port 587 STARTTLS | Already in place (`config.inc.php:18-19`). |
-| Batch header fetch | Roundcube already fetches ranges internally. |
-| SMTP pipelining | Handled by the library; no config knob. |
+### Evidence (logs/imap.log, 2026-06-30)
 
-The real latency surface is elsewhere: PHP execution, asset transfer, IMAP
-cache. Audit found three gaps and one tunable.
+```
+14:23:46  Connecting to ssl://imap.zoho.com:993     ← fresh connection
+14:23:47  CAPABILITY                                 +1s  TCP+TLS handshake
+14:23:47  AUTHENTICATE PLAIN
+14:23:48  SELECT INBOX OK                            +1s  RTT to Zoho
+```
+A *second* request seconds later opens a **brand-new** connection again, and one
+request issued three redundant SELECTs (Enviadas → INBOX → Enviadas), ~1s each.
+
+Per message open ≈ TLS (~1s) + auth + 1–3 SELECT (~1–3s) = **2–4s**, matching the
+2.56s browser waterfall for a 7.5 kB response.
+
+**Root cause:** PHP-FPM is stateless. Roundcube opens a new TCP+TLS connection
+and re-authenticates to Zoho on *every* HTTP request. From Brazil to Zoho-US each
+round trip is ~130ms and TLS + auth + selects stack into seconds.
 
 ## Symptoms targeted
 
-- Slow inbox / message-list load
+- Slow message-list load
 - Slow message open
 - Slow new-mail detection
 
-(Send latency is out of scope — nothing actionable in a stateless PHP app.)
+(Send/SMTP out of scope — symptoms don't include it; SMTP stays direct to Zoho.)
 
-## Confirmed environment facts
+## Solution: local IMAP connection-caching proxy (up-imapproxy)
 
-- Redis cache active in staging/prod (`REDIS_HOST` set). `imap_cache` and
-  `messages_cache_type` already resolve to redis (`config.inc.php:40-43`).
-  No change needed here. **Out of scope.**
-- redis PHP extension already in base image (`Dockerfile.base:12`).
-- Static assets already long-cached (`nginx.conf:44-46`).
+Insert `up-imapproxy` (SquirrelMail imapproxy) inside the container, between
+Roundcube and Zoho. It keeps **pre-authenticated backend sockets warm** and
+reuses them across Roundcube's per-request reconnects.
+
+```
+Roundcube ── 127.0.0.1:1143 (imapproxy, loopback plaintext)
+                   │  cache of warm, already-authenticated TLS sockets
+                   ▼
+             ssl://imap.zoho.com:993   ← TLS + LOGIN paid once, reused
+```
+
+On a cache hit, per-request cost drops from "full TLS+AUTH to US (~1–2s)" to
+"localhost socket reuse (~1ms)." First login per credential still pays full cost
+(unavoidable); everything after reuses.
+
+**Why not nginx mail proxy:** nginx opens one backend connection per *client*
+connection and closes it when the client disconnects. Roundcube disconnects after
+every request → backend closes → no reuse. imapproxy specifically keeps the
+backend socket cached *after* client disconnect, keyed by user/pass. It is the
+only option that solves this.
+
+## Multi-provider handling
+
+`config.inc.php` defines `avuz_providers` (zoho + digrepal). A single imapproxy
+instance has one fixed `server_hostname`. Run **one imapproxy instance per
+provider** on its own loopback port; point each provider's `imap` entry at it.
+
+| Provider | imapproxy listen | backend |
+|---|---|---|
+| zoho | 127.0.0.1:1143 | ssl://imap.zoho.com:993 |
+| digrepal | 127.0.0.1:1144 | tls://mail.digrepal.com.br:143 |
+
+Two providers = two lightweight instances. Acceptable; revisit only if provider
+count grows large.
 
 ## Changes
 
-### A. Enable OPcache (Dockerfile.base) — biggest server-side win
+### 1. Base image — add imapproxy (`Dockerfile.base`)
 
-Without OPcache, PHP recompiles every script on every request. Roundcube is a
-large PHP codebase; this tax hits every list load and message open.
+- Install `up-imapproxy`. **Decision/risk:** confirm an Alpine package exists
+  (`apk add imapproxy`). If not packaged, compile from source in the base image
+  (small C program, OpenSSL already present). Resolve before implementation.
+- imapproxy must be built/enabled **with TLS backend support** (it connects to
+  Zoho over SSL).
 
-- Add `opcache` to the `install-php-extensions` line (ensures it is enabled).
-- New ini in `conf.d`:
-  - `opcache.enable=1`
-  - `opcache.memory_consumption=128`
-  - `opcache.interned_strings_buffer=16`
-  - `opcache.max_accelerated_files=20000`
-  - `opcache.validate_timestamps=0` — images are immutable per deploy; code
-    never changes inside a running container, so skip the per-request `stat()`.
-    A new deploy = new image = fresh OPcache.
-  - `realpath_cache_size=4096K`, `realpath_cache_ttl=600`
-- No JIT — negligible gain for request/response web workloads, added risk.
+### 2. imapproxy configs (`docker/imapproxy-zoho.conf`, `docker/imapproxy-digrepal.conf`)
 
-Cost: one base-image rebuild (`./scripts/build-base.sh latest local`).
+Per instance, key settings:
+- `listen_address 127.0.0.1`, `listen_port 1143` (1144 for digrepal)
+- `server_hostname imap.zoho.com`, `server_port 993`
+- backend TLS **on, with certificate verification** (preserve current
+  `verify_peer` posture — do not downgrade security)
+- `cache_size` ~ expected concurrent users
+- `cache_expiration_time` ~300s (keep idle backend warm 5 min)
+- sensible `connect_timeout` / `connect_retries`
 
-### B. nginx gzip (docker/nginx.conf) — first-load + render win
+### 3. Supervisor (`docker/supervisor.conf`)
 
-Elastic ships large JS/CSS. They are long-cached but transferred uncompressed on
-first load and after cache eviction. Add gzip:
+Add a `[program:imapproxy-zoho]` and `[program:imapproxy-digrepal]` block so each
+proxy starts and is auto-restarted alongside php-fpm and nginx.
 
-- `gzip on; gzip_vary on; gzip_comp_level 5; gzip_min_length 256;`
-- `gzip_types` for css, javascript, json, svg, xml, plain text.
-- Do **not** gzip woff2/png/jpg/ico — already compressed.
+### 4. Roundcube config (`config.inc.php`)
 
-Cost: app-image rebuild only.
+- Point IMAP at the local proxy:
+  - `default_host` → `127.0.0.1`, `default_port` → `1143` (plaintext loopback)
+  - `avuz_providers['zoho']['imap']` → `127.0.0.1:1143`
+  - `avuz_providers['digrepal']['imap']` → `127.0.0.1:1144`
+- Drop/relax `imap_conn_options` TLS verify for the loopback hop (TLS now
+  terminates at imapproxy → Zoho, not Roundcube → proxy).
+- Keep `password_hosts` matching logic intact — `$_SESSION['storage_host']`
+  becomes `127.0.0.1`; **verify the password plugin's host gate still passes**
+  (it currently expects `imap.zoho.com`). Likely needs updating.
 
-### C. refresh_interval (config.inc.php) — new-mail detection
+### 5. refresh_interval (now low-cost) — `config.inc.php`
 
-Default poll is 60s. Lower the default to 30s for snappier new-mail discovery.
+Polling was expensive because every poll reconnected. With warm reuse, polls are
+cheap. Lower default `refresh_interval` to 30s for snappier new-mail detection —
+now safe.
 
-- `$config['refresh_interval'] = 30;`
-- Trade-off: ~2x new-mail poll frequency = more IMAP connections. 30s is the
-  safe floor; going lower is not worth the load. User can still override in
-  Settings.
+## Out of scope / rejected
 
-## Out of scope / explicitly rejected
+- OPcache / gzip — proven marginal (ms vs seconds). Optionally revisit later as
+  separate minor cleanup; not part of this work.
+- IMAP IDLE push — Roundcube doesn't support server-push; polling stays.
+- SMTP pooling — out of scope (no send-latency symptom).
+- Fixing redundant SELECT churn — separate Roundcube behavior; reuse makes each
+  SELECT loopback-fast, so deprioritized.
 
-- IMAP IDLE / persistent sockets — architecturally impossible here.
-- SMTP pooling / pipelining — same.
-- PHP JIT — no benefit for this workload.
-- `skip_deleted` — leave default; Zoho handles it fine, marginal at best.
-- Redis deploy changes — already set.
+## Security notes
 
-## Verification
+- imapproxy holds credentials in memory to keep sessions warm. It listens on
+  loopback only — not reachable outside the container.
+- Roundcube → imapproxy hop is loopback plaintext (same container). Acceptable;
+  document it.
+- Backend imapproxy → Zoho stays TLS with cert verification. No downgrade.
+- Net effect on Zoho: **fewer** connections than today (reuse vs new-per-request)
+  — reduces any throttling risk.
 
-Image cannot run locally (linux image; verify on staging per project memory).
+## Verification (on staging — image is linux, no local run)
 
-1. **OPcache**: after deploy, `php -i | grep opcache.enable` inside container →
-   `On`; check `opcache_get_status()` hit rate climbs after warm-up.
-2. **gzip**: `curl -H 'Accept-Encoding: gzip' -I https://<staging>/program/js/app.js`
-   → `Content-Encoding: gzip`.
-3. **refresh_interval**: confirm new mail appears within ~30s in the UI.
-4. Overall: compare inbox-load and message-open timing in browser devtools
-   Network panel before/after on staging.
+1. **Connection reuse:** re-enable `imap_debug`. Roundcube log now shows
+   `Connecting to 127.0.0.1` (fast); the Zoho TLS+AUTH no longer appears per
+   request. Confirm no `Connecting to ssl://imap.zoho.com` storm.
+2. **Latency:** browser devtools — message-open `get` request drops from ~2.5s
+   toward <0.5s after warm-up.
+3. **Multi-provider:** log in as a digrepal user; confirm it routes through
+   127.0.0.1:1144 and mail loads.
+4. **Password change:** confirm the password plugin still works after the
+   `storage_host` change (host gate).
+5. **New-mail:** appears within ~30s.
 
 ## Risk
 
-Low. No IMAP/SMTP protocol changes, no skin/plugin changes. Worst case:
-`validate_timestamps=0` would cache stale code — mitigated because each deploy
-ships a fresh image with empty OPcache.
+Medium (was Low). New moving part (imapproxy process + per-provider instances).
+Main risks: (a) Alpine packaging/compile of imapproxy, (b) password-plugin host
+gate breaking on the `127.0.0.1` storage_host, (c) backend TLS verification
+config in imapproxy. All have explicit verification steps above.
