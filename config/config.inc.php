@@ -84,14 +84,17 @@ $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 // -- Skin --
 $config['skin'] = 'avuz';
 $config['dont_override'] = ['skin'];
+// Paths are skin-relative: Roundcube's file_callback resolves a leading-slash
+// href against the skin tree (skins/avuz first), so '/images/x' → skins/avuz/images/x.
+// A site-absolute '/skins/avuz/...' would be re-prefixed with the skin path (404).
 $config['skin_logo'] = [
-    ''             => '/skins/avuz/images/icon.png',
-    'login'        => '/skins/avuz/images/login-logo.png',
-    '[favicon]'    => '/skins/avuz/images/favicon.ico',
-    '[small]'      => '/skins/avuz/images/icon.png',
-    '[dark]'       => '/skins/avuz/images/icon.png',
-    '[small-dark]' => '/skins/avuz/images/icon.png',
-    '[print]'      => '/skins/avuz/images/logo.png',
+    ''             => '/images/icon.png',
+    'login'        => '/images/login-logo.png',
+    '[favicon]'    => '/images/favicon-avuz.ico',
+    '[small]'      => '/images/icon.png',
+    '[dark]'       => '/images/icon.png',
+    '[small-dark]' => '/images/icon.png',
+    '[print]'      => '/images/logo.png',
     '[link]'       => '',
 ];
 
