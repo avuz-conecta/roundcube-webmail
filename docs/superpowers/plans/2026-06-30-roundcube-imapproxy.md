@@ -397,3 +397,17 @@ git commit --allow-empty -m "test(proxy): staging verification of imapproxy late
 3. **digrepal STARTTLS** — assumes `mail.digrepal.com.br:143` offers STARTTLS; verify at Task 6 with a digrepal login.
 4. **Blast radius** — proxy fronts all mail; mitigated by the `IMAP_USE_PROXY` toggle (default OFF, one-flip revert, no rebuild).
 5. **If imapproxy proves too fragile** to build/run reliably, abandon and fall to the spec's Escalation (relocate container near Zoho-US), which removes more latency anyway.
+
+---
+
+## Post-review amendments (applied during execution)
+
+Final whole-branch review changed three things from the task text above:
+
+1. **imapproxy daemonizes** → both `imapproxy-*.conf` set `foreground_mode true` (supervisor needs foreground; up-imapproxy has no foreground CLI flag, only this config directive). `chroot_directory ""` removed.
+2. **digrepal now routes through stunnel too** (not imapproxy-native TLS, which lacked CA/hostname verification). stunnel gained an `[imap-digrepal]` STARTTLS section (`protocol = imap`, `accept 127.0.0.1:9943`, `checkHost mail.digrepal.com.br`); `imapproxy-digrepal.conf` backend → `127.0.0.1:9943`, `force_tls no`, `tls_verify_server` removed.
+3. **config.inc.php:** `refresh_interval`/`min_refresh_interval = 30` gated INSIDE the proxy branch only (direct mode keeps default 60); `default_host` carries the port (`127.0.0.1:1143`) so the bare-host fallback doesn't resolve to 143.
+
+Final chain: zoho `127.0.0.1:1143`→imapproxy→stunnel:9993→`imap.zoho.com:993`; digrepal `127.0.0.2:1143`→imapproxy→stunnel:9943 STARTTLS→`mail.digrepal.com.br:143`.
+
+Deferred minors (ops, non-blocking): monitor supervisor proxy state (no auto-fallback when toggle ON); drop privileges on stunnel/imapproxy.
