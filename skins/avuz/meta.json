@@ -1,5 +1,7 @@
 {
   "name": "Avuz",
   "extends": "elastic",
-  "config": {}
+  "config": {
+    "dark_mode_support": false
+  }
 }

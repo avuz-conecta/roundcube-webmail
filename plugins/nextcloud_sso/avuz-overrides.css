@@ -332,9 +332,9 @@ a.button.mainaction {
   border-radius: 0 !important;
 }
 
-/* Issue 4: hide dark mode toggle and About button */
+/* Issue 4: hide the light/dark theme toggle (dark mode disabled in skin meta) and About button */
 #taskmenu a.darkmode,
-#taskmenu a.theme.dark,
+#taskmenu a.theme,
 #taskmenu a.about {
   display: none !important;
 }
