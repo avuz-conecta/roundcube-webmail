@@ -68,12 +68,22 @@ Confirmed imapproxy can't open a 993-implicit backend. stunnel bridges it (see
 diagram). Preserves cert verification via stunnel `verifyChain` + CA bundle — no
 security downgrade vs today's `verify_peer`.
 
-### G3 — honest magnitude + SELECT cache
+### G3 — honest magnitude (SELECT cache rejected)
 `<0.5s` (v2) was wrong. imapproxy removes TLS handshake (~1s) + auth, **not** the
-SELECT/FETCH RTTs (physical distance). **But** `enable_select_cache` caches SELECT
-responses, eliminating the redundant 3× SELECT churn.
-**Revised estimate: ~2.5s → ~1.0–1.5s.** Residual is Brazil→US distance on the
-real FETCH — only relocation removes that (see Escalation).
+SELECT/FETCH RTTs (physical distance). A later grilling also **rejected**
+`enable_select_cache`: it serves stale message counts and hides new mail through
+imapproxy (Roundcube #4505) — directly breaking the new-mail symptom. So the
+redundant SELECTs stay.
+**Revised estimate: ~2.5s → ~1.5s.** Residual is Brazil→US distance on the real
+FETCH — only relocation removes that (see Escalation).
+
+### G5/G6 — availability hardening (added during planning)
+- **Env-gated rollback:** all proxy routing sits behind `IMAP_USE_PROXY` (default
+  OFF = direct to Zoho). The proxy fronts all mail, so a crash must be revertible
+  with one env flip, no rebuild.
+- **Zoho connection-block guard:** Zoho temporarily blocks accounts on too many
+  concurrent IMAP connections. imapproxy holds sockets warm, so keep a short
+  `cache_expiration_time` (60s) and watch for block errors on staging.
 
 ## Multi-provider handling
 
