@@ -12,6 +12,8 @@
   rcmail.addEventListener('init', function () {
     var overlay = null;
     var timer = null;
+    var saving = false;
+    var succeeded = false;
 
     // The password form runs inside the settings content iframe; cover the top
     // window so the overlay spans the whole app (same-origin, so accessible).
@@ -53,7 +55,33 @@
       overlay = null;
     }
 
-    rcmail.addEventListener('beforeplugin.password-save', show);
-    rcmail.addEventListener('responseafterplugin.password-save', hide);
+    rcmail.addEventListener('beforeplugin.password-save', function () {
+      saving = true;
+      succeeded = false;
+      show();
+    });
+
+    // A 'confirmation' message during the save means the password changed.
+    rcmail.addEventListener('message', function (prop) {
+      if (saving && prop && prop.type === 'confirmation') {
+        succeeded = true;
+      }
+    });
+
+    rcmail.addEventListener('responseafterplugin.password-save', function () {
+      saving = false;
+
+      if (succeeded) {
+        // Keep the overlay up and send the whole app to the inbox.
+        try {
+          (window.top || window).location.href = '?_task=mail';
+        } catch (e) {
+          window.location.href = '?_task=mail';
+        }
+        return;
+      }
+
+      hide();
+    });
   });
 })();
