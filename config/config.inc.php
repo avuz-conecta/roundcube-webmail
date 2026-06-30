@@ -13,6 +13,7 @@ $useProxy = getenv('IMAP_USE_PROXY') === '1';
 if ($useProxy) {
     $config['default_host']    = '127.0.0.1';
     $config['default_port']    = 1143;
+    // no imap_conn_options here: loopback hop is plaintext, stunnel handles TLS to Zoho
     $config['imap_auth_type']  = 'LOGIN'; // imapproxy caches LOGIN, not SASL PLAIN
     $config['avuz_providers']  = [
         'zoho'     => ['imap' => '127.0.0.1:1143', 'smtp' => 'tls://smtp.zoho.com:587'],
@@ -37,7 +38,6 @@ $config['smtp_port'] = 587;
 $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['smtp_timeout'] = 15;
-
 
 // -- Cache --
 // Redis if REDIS_HOST is set, otherwise fall back to DB cache
