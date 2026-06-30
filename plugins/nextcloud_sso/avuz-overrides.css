@@ -405,7 +405,7 @@ input[type="radio"]:checked + label::before {
   position: static !important;
   top: auto !important;
   display: block !important;
-  margin: 0 auto 32px !important;
+  margin: 0 auto 44px !important;
   max-height: none !important;
   max-width: 180px !important;
   width: auto !important;
@@ -436,7 +436,7 @@ input[type="radio"]:checked + label::before {
 }
 
 .task-login #login-form .formbuttons {
-  margin: 0 !important;
+  margin: 28px 0 0 !important;
   padding: 0 !important;
 }
 
