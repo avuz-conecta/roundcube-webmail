@@ -22,6 +22,7 @@ class nextcloud_sso extends rcube_plugin
     public function init(): void
     {
         $this->include_stylesheet('avuz-overrides.css');
+        $this->include_script('avuz-overrides.js');
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
         $this->add_hook('login_after', [$this, 'gatePasswordChange']);

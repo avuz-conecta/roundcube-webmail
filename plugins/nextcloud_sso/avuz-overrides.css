@@ -500,6 +500,49 @@ input[type="radio"]:checked + label::before {
   display: none !important;
 }
 
+/* ── Password-change loading overlay ──────────────── */
+.avuz-loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100000;
+}
+
+.avuz-loading-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 28px 36px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
+}
+
+.avuz-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #ededed;
+  border-top-color: #2bb5e3;
+  border-radius: 50%;
+  animation: avuz-spin 0.8s linear infinite;
+}
+
+.avuz-loading-text {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #333;
+}
+
+@keyframes avuz-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ── Scrollbars ───────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
