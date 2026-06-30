@@ -32,6 +32,9 @@ RUN chown -R www-data:www-data /var/www/roundcube \
 # Copy runtime configs
 COPY docker/nginx.conf /etc/nginx/http.d/default.conf
 COPY docker/supervisor.conf /etc/supervisor/conf.d/supervisor.conf
+COPY docker/stunnel.conf /etc/stunnel/stunnel.conf
+COPY docker/imapproxy-zoho.conf /etc/imapproxy-zoho.conf
+COPY docker/imapproxy-digrepal.conf /etc/imapproxy-digrepal.conf
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
