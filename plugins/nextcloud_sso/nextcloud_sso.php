@@ -24,6 +24,96 @@ class nextcloud_sso extends rcube_plugin
         $this->include_stylesheet('avuz-overrides.css');
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
+        $this->add_hook('login_after', [$this, 'gatePasswordChange']);
+
+        // The password plugin re-evaluates the forced-change redirect on every
+        // request, reading config fresh — so re-apply the exemption each request.
+        $this->enforceTenantPasswordGate(rcmail::get_instance(), false);
+    }
+
+    /**
+     * login_after hook — resolve tenant membership for the just-logged-in user
+     * and exempt non-tenant domains from the forced password change. Runs before
+     * the password plugin's login_after (this plugin loads first), so the
+     * exemption is in place when password decides whether to force the change.
+     */
+    public function gatePasswordChange(array $args): array
+    {
+        $this->enforceTenantPasswordGate(rcmail::get_instance(), true);
+        return $args;
+    }
+
+    /**
+     * Pure exemption rule: a non-tenant user is added to the password plugin's
+     * login-exceptions list (which suppresses the forced/first-login password
+     * change). Tenant users are left untouched so they are still forced.
+     *
+     * @param list<string> $exceptions
+     * @return list<string>
+     */
+    public static function applyTenantExemption(array $exceptions, bool $isTenant, string $username): array
+    {
+        if ($isTenant || $username === '') {
+            return $exceptions;
+        }
+
+        if (!in_array($username, $exceptions, true)) {
+            $exceptions[] = $username;
+        }
+
+        return $exceptions;
+    }
+
+    private function enforceTenantPasswordGate(rcmail $rcmail, bool $recheck): void
+    {
+        $username = isset($_SESSION['username']) ? (string) $_SESSION['username'] : '';
+        if ($username === '') {
+            return;
+        }
+
+        if ($recheck || !array_key_exists('avuz_is_tenant', $_SESSION)) {
+            $_SESSION['avuz_is_tenant'] = $this->isTenantDomain($rcmail, $username);
+        }
+
+        $exceptions = (array) $rcmail->config->get('password_login_exceptions', []);
+        $updated    = self::applyTenantExemption($exceptions, (bool) $_SESSION['avuz_is_tenant'], $username);
+        if ($updated !== $exceptions) {
+            $rcmail->config->set('password_login_exceptions', $updated);
+        }
+    }
+
+    /**
+     * Ask the broker whether the email's domain is a configured Zoho tenant.
+     * On any failure (no config, non-200, unreachable) returns false so the
+     * forced password change is skipped — a non-tenant domain can never be
+     * reset by the broker, so forcing it is a dead-end.
+     */
+    private function isTenantDomain(rcmail $rcmail, string $email): bool
+    {
+        $url    = (string) $rcmail->config->get('avuz_broker_url');
+        $secret = (string) $rcmail->config->get('avuz_broker_secret');
+        if ($url === '' || $secret === '') {
+            return false;
+        }
+
+        try {
+            $client   = new \GuzzleHttp\Client(['timeout' => 5]);
+            $response = $client->get(rtrim($url, '/') . '/is-tenant', [
+                'query'       => ['email' => $email],
+                'headers'     => ['X-Broker-Secret' => $secret],
+                'http_errors' => false,
+            ]);
+
+            if ($response->getStatusCode() !== 200) {
+                return false;
+            }
+
+            $data = json_decode((string) $response->getBody(), true);
+            return is_array($data) && !empty($data['tenant']);
+        } catch (\Exception $e) {
+            rcube::write_log('errors', 'nextcloud_sso: is-tenant check failed: ' . $e->getMessage());
+            return false;
+        }
     }
 
     /**

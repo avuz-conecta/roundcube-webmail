@@ -61,4 +61,34 @@ class NextcloudSso_Plugin extends PHPUnit\Framework\TestCase
         $result = $plugin->applySmtp(['smtp_host' => 'tls://smtp.zoho.com:587']);
         $this->assertSame('tls://smtp.zoho.com:587', $result['smtp_host']);
     }
+
+    public function test_non_tenant_user_is_exempted_from_forced_change()
+    {
+        $result = nextcloud_sso::applyTenantExemption([], false, 'user@other.com');
+        $this->assertSame(['user@other.com'], $result);
+    }
+
+    public function test_tenant_user_is_not_exempted()
+    {
+        $result = nextcloud_sso::applyTenantExemption([], true, 'user@tenant.com');
+        $this->assertSame([], $result);
+    }
+
+    public function test_exemption_is_not_duplicated()
+    {
+        $result = nextcloud_sso::applyTenantExemption(['user@other.com'], false, 'user@other.com');
+        $this->assertSame(['user@other.com'], $result);
+    }
+
+    public function test_existing_exceptions_are_preserved_when_adding()
+    {
+        $result = nextcloud_sso::applyTenantExemption(['admin@x.com'], false, 'user@other.com');
+        $this->assertSame(['admin@x.com', 'user@other.com'], $result);
+    }
+
+    public function test_empty_username_is_ignored()
+    {
+        $result = nextcloud_sso::applyTenantExemption([], false, '');
+        $this->assertSame([], $result);
+    }
 }
