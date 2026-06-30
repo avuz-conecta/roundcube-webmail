@@ -390,7 +390,7 @@ input[type="radio"]:checked + label::before {
   flex-direction: column !important;
   flex: 0 0 auto !important;
   width: 100% !important;
-  max-width: 440px !important;
+  max-width: 380px !important;
   background: #fff !important;
   border-radius: 28px !important;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.06) !important;
