@@ -24,6 +24,8 @@ const resetPassword = createResetPassword({
   reset: (org, account, newPass) => resetZohoPassword(accountsDepsFor(org), account, newPass),
 });
 
-createServer({ sharedSecret: config.sharedSecret, resetPassword }).listen(config.port, () => {
+const isTenant = (email: string) => resolveTenant(config.tenants, email) !== null;
+
+createServer({ sharedSecret: config.sharedSecret, resetPassword, isTenant }).listen(config.port, () => {
   console.log(`password-broker listening on ${config.port}`);
 });
