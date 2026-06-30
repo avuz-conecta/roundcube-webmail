@@ -31,6 +31,10 @@ services:
     environment:
       - PORT=9000
       - BROKER_SHARED_SECRET=$AVUZ_BROKER_SECRET
+      # ZOHO_TENANTS: JSON map of domain -> Zoho org credentials. Optional
+      # per-tenant "forcePasswordChange" (bool) toggles the forced first-login
+      # password change for that domain (absent = true). Example:
+      # {"client-a.com":{"clientId":"..","clientSecret":"..","refreshToken":"..","zoid":"..","forcePasswordChange":false}}
       - ZOHO_TENANTS=$ZOHO_TENANTS
       - ZOHO_IMAP_HOST=imap.zoho.com
       - ZOHO_IMAP_PORT=993

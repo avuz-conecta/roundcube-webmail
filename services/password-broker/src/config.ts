@@ -1,4 +1,12 @@
-export type ZohoOrg = { clientId: string; clientSecret: string; refreshToken: string; zoid: string };
+export type ZohoOrg = {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  zoid: string;
+  // Per-tenant toggle for the forced first-login password change.
+  // Absent = true (force), for backward compatibility.
+  forcePasswordChange?: boolean;
+};
 
 export type BrokerConfig = {
   port: number;
@@ -31,4 +39,12 @@ export const resolveTenant = (tenants: Map<string, ZohoOrg>, email: string): Zoh
   const domain = email.split("@")[1]?.toLowerCase();
   if (!domain) return null;
   return tenants.get(domain) ?? null;
+};
+
+// Whether a first-login password change should be forced for this email:
+// the domain must be a tenant AND its forcePasswordChange flag must be true
+// (absent flag defaults to true). Non-tenant domains are never forced.
+export const shouldForcePasswordChange = (tenants: Map<string, ZohoOrg>, email: string): boolean => {
+  const org = resolveTenant(tenants, email);
+  return org !== null && (org.forcePasswordChange ?? true);
 };

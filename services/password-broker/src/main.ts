@@ -1,4 +1,4 @@
-import { loadConfig, resolveTenant, type ZohoOrg } from "./config.js";
+import { loadConfig, resolveTenant, shouldForcePasswordChange, type ZohoOrg } from "./config.js";
 import { createServer } from "./server.js";
 import { createTokenProvider } from "./zoho-token.js";
 import { findAccountByEmail, resetZohoPassword } from "./zoho-accounts.js";
@@ -25,7 +25,8 @@ const resetPassword = createResetPassword({
 });
 
 const isTenant = (email: string) => resolveTenant(config.tenants, email) !== null;
+const forcePasswordChange = (email: string) => shouldForcePasswordChange(config.tenants, email);
 
-createServer({ sharedSecret: config.sharedSecret, resetPassword, isTenant }).listen(config.port, () => {
+createServer({ sharedSecret: config.sharedSecret, resetPassword, isTenant, forcePasswordChange }).listen(config.port, () => {
   console.log(`password-broker listening on ${config.port}`);
 });

@@ -6,6 +6,7 @@ export type ServerDeps = {
   sharedSecret: string;
   resetPassword: (input: ResetInput) => Promise<ResetResult>;
   isTenant: (email: string) => boolean;
+  forcePasswordChange: (email: string) => boolean;
 };
 
 const readJson = (request: http.IncomingMessage): Promise<unknown> =>
@@ -41,7 +42,7 @@ export const createServer = (deps: ServerDeps): http.Server =>
       if (!secretOk) return send(401, { ok: false, error: "unauthorized" });
       const email = new URL(url, "http://localhost").searchParams.get("email");
       if (!email) return send(400, { ok: false, error: "bad request" });
-      return send(200, { ok: true, tenant: deps.isTenant(email) });
+      return send(200, { ok: true, tenant: deps.isTenant(email), forcePasswordChange: deps.forcePasswordChange(email) });
     }
 
     if (request.method !== "POST" || url !== "/reset") return send(404, { ok: false, error: "not found" });

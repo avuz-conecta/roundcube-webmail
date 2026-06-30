@@ -17,7 +17,8 @@ const post = async (server: ReturnType<typeof createServer>, headers: Record<str
 const okDeps = {
   sharedSecret: "secret",
   resetPassword: async (_input: ResetInput): Promise<ResetResult> => ({ status: 200, body: { ok: true } }),
-  isTenant: (email: string): boolean => email.endsWith("@tenant.com"),
+  isTenant: (email: string): boolean => email.endsWith("tenant.com"),
+  forcePasswordChange: (email: string): boolean => email.endsWith("tenant.com") && !email.endsWith("noforce.tenant.com"),
 };
 
 const getIsTenant = async (server: ReturnType<typeof createServer>, headers: Record<string, string>, query: string) => {
@@ -66,16 +67,22 @@ describe("broker /is-tenant", () => {
     expect(status).toBe(401);
   });
 
-  test("returns tenant:true for a configured tenant domain", async () => {
+  test("returns tenant:true and forcePasswordChange:true for a forcing tenant", async () => {
     const { status, body } = await getIsTenant(createServer(okDeps), { "x-broker-secret": "secret" }, "?email=user@tenant.com");
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true, tenant: true });
+    expect(body).toEqual({ ok: true, tenant: true, forcePasswordChange: true });
   });
 
-  test("returns tenant:false for a domain not in tenants", async () => {
+  test("returns forcePasswordChange:false for a tenant with forcing disabled", async () => {
+    const { status, body } = await getIsTenant(createServer(okDeps), { "x-broker-secret": "secret" }, "?email=user@noforce.tenant.com");
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, tenant: true, forcePasswordChange: false });
+  });
+
+  test("returns tenant:false and forcePasswordChange:false for a non-tenant", async () => {
     const { status, body } = await getIsTenant(createServer(okDeps), { "x-broker-secret": "secret" }, "?email=user@other.com");
     expect(status).toBe(200);
-    expect(body).toEqual({ ok: true, tenant: false });
+    expect(body).toEqual({ ok: true, tenant: false, forcePasswordChange: false });
   });
 
   test("returns 400 when email query is missing", async () => {

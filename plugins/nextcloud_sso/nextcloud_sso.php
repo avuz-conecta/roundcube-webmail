@@ -30,18 +30,18 @@ class nextcloud_sso extends rcube_plugin
 
         // The password plugin re-evaluates the forced-change redirect on every
         // request, reading config fresh — so re-apply the exemption each request.
-        $this->enforceTenantPasswordGate(rcmail::get_instance(), false);
+        $this->enforcePasswordChangeGate(rcmail::get_instance(), false);
     }
 
     /**
-     * login_after hook — resolve tenant membership for the just-logged-in user
-     * and exempt non-tenant domains from the forced password change. Runs before
-     * the password plugin's login_after (this plugin loads first), so the
-     * exemption is in place when password decides whether to force the change.
+     * login_after hook — ask the broker whether this user's domain should force a
+     * password change, and exempt them when it should not. Runs before the
+     * password plugin's login_after (this plugin loads first), so the exemption is
+     * in place when password decides whether to force the change.
      */
     public function gatePasswordChange(array $args): array
     {
-        $this->enforceTenantPasswordGate(rcmail::get_instance(), true);
+        $this->enforcePasswordChangeGate(rcmail::get_instance(), true);
         return $args;
     }
 
@@ -58,16 +58,17 @@ class nextcloud_sso extends rcube_plugin
     }
 
     /**
-     * Pure exemption rule: a non-tenant user is added to the password plugin's
-     * login-exceptions list (which suppresses the forced/first-login password
-     * change). Tenant users are left untouched so they are still forced.
+     * Pure exemption rule: when a password change should NOT be forced for this
+     * user, add them to the password plugin's login-exceptions list (which
+     * suppresses the forced/first-login change). When it should be forced, leave
+     * them untouched so the normal first-login force applies.
      *
      * @param list<string> $exceptions
      * @return list<string>
      */
-    public static function applyTenantExemption(array $exceptions, bool $isTenant, string $username): array
+    public static function applyForceExemption(array $exceptions, bool $force, string $username): array
     {
-        if ($isTenant || $username === '') {
+        if ($force || $username === '') {
             return $exceptions;
         }
 
@@ -78,31 +79,33 @@ class nextcloud_sso extends rcube_plugin
         return $exceptions;
     }
 
-    private function enforceTenantPasswordGate(rcmail $rcmail, bool $recheck): void
+    private function enforcePasswordChangeGate(rcmail $rcmail, bool $recheck): void
     {
         $username = isset($_SESSION['username']) ? (string) $_SESSION['username'] : '';
         if ($username === '') {
             return;
         }
 
-        if ($recheck || !array_key_exists('avuz_is_tenant', $_SESSION)) {
-            $_SESSION['avuz_is_tenant'] = $this->isTenantDomain($rcmail, $username);
+        if ($recheck || !array_key_exists('avuz_force_pwchange', $_SESSION)) {
+            $_SESSION['avuz_force_pwchange'] = $this->shouldForcePasswordChange($rcmail, $username);
         }
 
         $exceptions = (array) $rcmail->config->get('password_login_exceptions', []);
-        $updated    = self::applyTenantExemption($exceptions, (bool) $_SESSION['avuz_is_tenant'], $username);
+        $updated    = self::applyForceExemption($exceptions, (bool) $_SESSION['avuz_force_pwchange'], $username);
         if ($updated !== $exceptions) {
             $rcmail->config->set('password_login_exceptions', $updated);
         }
     }
 
     /**
-     * Ask the broker whether the email's domain is a configured Zoho tenant.
-     * On any failure (no config, non-200, unreachable) returns false so the
-     * forced password change is skipped — a non-tenant domain can never be
-     * reset by the broker, so forcing it is a dead-end.
+     * Ask the broker whether a first-login password change should be forced for
+     * this email — true only when the domain is a tenant AND its per-tenant
+     * forcePasswordChange flag is enabled. On any failure (no config, non-200,
+     * unreachable) returns false so the change is skipped: a non-tenant (or a
+     * tenant with forcing disabled) can never complete the reset, so forcing it
+     * would be a dead-end.
      */
-    private function isTenantDomain(rcmail $rcmail, string $email): bool
+    private function shouldForcePasswordChange(rcmail $rcmail, string $email): bool
     {
         $url    = (string) $rcmail->config->get('avuz_broker_url');
         $secret = (string) $rcmail->config->get('avuz_broker_secret');
@@ -123,9 +126,9 @@ class nextcloud_sso extends rcube_plugin
             }
 
             $data = json_decode((string) $response->getBody(), true);
-            return is_array($data) && !empty($data['tenant']);
+            return is_array($data) && !empty($data['forcePasswordChange']);
         } catch (\Exception $e) {
-            rcube::write_log('errors', 'nextcloud_sso: is-tenant check failed: ' . $e->getMessage());
+            rcube::write_log('errors', 'nextcloud_sso: force-password-change check failed: ' . $e->getMessage());
             return false;
         }
     }
