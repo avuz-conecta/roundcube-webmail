@@ -11,10 +11,12 @@ $config['db_dsnw'] = getenv('ROUNDCUBE_DB_DSN') ?: 'sqlite:////var/www/roundcube
 // -- IMAP: proxy-gated. IMAP_USE_PROXY=1 → local imapproxy; else direct to Zoho --
 $useProxy = getenv('IMAP_USE_PROXY') === '1';
 if ($useProxy) {
-    $config['default_host']    = '127.0.0.1';
-    $config['default_port']    = 1143;
+    $config['default_host']         = '127.0.0.1:1143';
+    $config['default_port']         = 1143;
     // no imap_conn_options here: loopback hop is plaintext, stunnel handles TLS to Zoho
-    $config['imap_auth_type']  = 'LOGIN'; // imapproxy caches LOGIN, not SASL PLAIN
+    $config['imap_auth_type']       = 'LOGIN'; // imapproxy caches LOGIN, not SASL PLAIN
+    $config['refresh_interval']     = 30;
+    $config['min_refresh_interval'] = 30;
     $config['avuz_providers']  = [
         'zoho'     => ['imap' => '127.0.0.1:1143', 'smtp' => 'tls://smtp.zoho.com:587'],
         'digrepal' => ['imap' => '127.0.0.2:1143', 'smtp' => 'tls://mail.digrepal.com.br:587'],
@@ -103,7 +105,6 @@ $config['skin_logo'] = [
 ];
 
 // -- UI / Locale --
-$config['refresh_interval'] = 30; // snappier new-mail; cheap once connections are reused
 $config['product_name'] = 'Conecta Mail';
 $config['language'] = 'pt_BR';
 $config['timezone'] = 'America/Sao_Paulo';
