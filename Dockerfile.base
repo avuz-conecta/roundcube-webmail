@@ -15,6 +15,29 @@ RUN apk add --no-cache \
   nginx supervisor sqlite \
   curl bash
 
+# stunnel: TLS terminator for Zoho 993 (imapproxy has no native implicit-SSL)
+RUN apk add --no-cache stunnel
+
+# up-imapproxy: not in Alpine repos — compile from pinned Debian source + official patches
+# Patches (openssl-1.1, fix-ssl-types, fix-size_t-formatters, etc.) fix OpenSSL 3 / GCC 14 issues
+RUN apk add --no-cache --virtual .imapproxy-build \
+      build-base autoconf automake openssl-dev ncurses-dev bzip2 xz curl \
+  && curl -fsSL "https://deb.debian.org/debian/pool/main/u/up-imapproxy/up-imapproxy_1.2.8~svn20171105.orig.tar.bz2" \
+       -o /tmp/imapproxy.tar.bz2 \
+  && curl -fsSL "https://deb.debian.org/debian/pool/main/u/up-imapproxy/up-imapproxy_1.2.8~svn20171105-2.1.debian.tar.xz" \
+       -o /tmp/imapproxy-debian.tar.xz \
+  && mkdir -p /tmp/imapproxy && tar -xjf /tmp/imapproxy.tar.bz2 -C /tmp/imapproxy --strip-components=1 \
+  && mkdir -p /tmp/imapproxy-debian && tar -xJf /tmp/imapproxy-debian.tar.xz -C /tmp/imapproxy-debian --strip-components=1 \
+  && cd /tmp/imapproxy \
+  && while read -r p; do patch -p1 < "/tmp/imapproxy-debian/patches/$p" || exit 1; done \
+       < /tmp/imapproxy-debian/patches/series \
+  && autoreconf -fi \
+  && ./configure CFLAGS="-g -O2 -std=gnu11 -Wno-incompatible-pointer-types" \
+  && make \
+  && cp bin/in.imapproxyd /usr/local/sbin/in.imapproxyd \
+  && cd / && rm -rf /tmp/imapproxy /tmp/imapproxy.tar.bz2 /tmp/imapproxy-debian /tmp/imapproxy-debian.tar.xz \
+  && apk del .imapproxy-build
+
 RUN { \
   echo '[www]'; \
   echo 'user = www-data'; \
