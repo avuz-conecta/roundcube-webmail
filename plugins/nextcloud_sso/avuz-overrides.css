@@ -405,7 +405,7 @@ input[type="radio"]:checked + label::before {
   position: static !important;
   top: auto !important;
   display: block !important;
-  margin: 0 auto 44px !important;
+  margin: 0 auto 32px !important;
   max-height: none !important;
   max-width: 150px !important;
   width: auto !important;
