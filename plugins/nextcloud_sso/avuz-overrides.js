@@ -60,7 +60,6 @@
     // event to hook. On success the page reloads to plugin.password-save with
     // env.avuz_password_changed set by the password_change hook. Detect it here,
     // on the freshly loaded result page, and send the top window to the inbox.
-    console.log('[avuz] pwchange init: env flag =', rcmail.env.avuz_password_changed, 'action =', rcmail.env.action);
     if (rcmail.env.avuz_password_changed) {
       show();
       var win = window.top || window;
