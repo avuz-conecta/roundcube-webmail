@@ -366,6 +366,142 @@ input[type="radio"]:checked + label::before {
   background-color: #2bb5e3 !important;
 }
 
+/* =====================================================
+   Login page — ConectaMail mockup
+   Single white card wrapping logo + form on a grey page.
+   All rules .task-login-scoped so the in-app UI is untouched.
+   ===================================================== */
+
+.task-login body {
+  background-color: #f1f1f1 !important;
+}
+
+/* Center the card on the grey page */
+.task-login #layout {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 24px 16px !important;
+  background-color: #f1f1f1 !important;
+}
+
+/* The single white card — wraps logo + form */
+.task-login #layout-content {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  max-width: 440px !important;
+  background: #fff !important;
+  border-radius: 28px !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.06) !important;
+  padding: 48px 40px !important;
+  text-align: center !important;
+  overflow: visible !important;
+}
+
+/* ConectaMail wordmark logo, inside the card top */
+.task-login img#logo {
+  content: url('/skins/avuz/images/login-logo.png') !important;
+  position: static !important;
+  top: auto !important;
+  display: block !important;
+  margin: 0 auto 32px !important;
+  max-height: none !important;
+  max-width: 220px !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+/* Form is transparent and full width inside the card */
+.task-login #login-form {
+  position: static !important;
+  top: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* Flatten the table layout into a stacked column */
+.task-login #login-form table,
+.task-login #login-form tbody,
+.task-login #login-form tr,
+.task-login #login-form td {
+  display: block !important;
+  width: 100% !important;
+}
+
+.task-login #login-form td.title {
+  display: none !important;
+}
+
+.task-login #login-form tr {
+  margin-bottom: 16px !important;
+}
+
+/* Mockup fields are plain pills — hide the leading user/lock icons */
+.task-login #login-form .input-group-prepend,
+.task-login #login-form .input-group-text {
+  display: none !important;
+}
+
+.task-login #login-form .input-group {
+  display: block !important;
+}
+
+/* Light grey pill inputs */
+.task-login #rcmloginuser,
+.task-login #rcmloginpwd {
+  background-color: #ededed !important;
+  border: none !important;
+  border-radius: 22px !important;
+  padding: 14px 20px !important;
+  height: auto !important;
+  width: 100% !important;
+  box-shadow: none !important;
+  color: #333 !important;
+}
+
+.task-login #rcmloginuser:focus,
+.task-login #rcmloginpwd:focus {
+  background-color: #e8e8e8 !important;
+  border: none !important;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Black submit pill (overrides the lime accent for login) */
+.task-login #rcmloginsubmit {
+  background-color: #000 !important;
+  border-color: #000 !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  border-radius: 50px !important;
+  width: 100% !important;
+  padding: 14px 0 !important;
+}
+
+.task-login #rcmloginsubmit:hover {
+  background-color: #222 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+
+/* Muted footer */
+.task-login #login-footer {
+  color: #9a9a9a !important;
+  text-align: center !important;
+  margin-top: 24px !important;
+}
+
+.task-login #login-footer > div {
+  background: transparent !important;
+  padding: 0 !important;
+  margin-top: 1rem !important;
+}
+
 /* ── Scrollbars ───────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
