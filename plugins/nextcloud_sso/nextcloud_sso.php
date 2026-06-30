@@ -26,6 +26,7 @@ class nextcloud_sso extends rcube_plugin
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
         $this->add_hook('login_after', [$this, 'gatePasswordChange']);
+        $this->add_hook('password_change', [$this, 'flagPasswordChanged']);
 
         // The password plugin re-evaluates the forced-change redirect on every
         // request, reading config fresh — so re-apply the exemption each request.
@@ -41,6 +42,18 @@ class nextcloud_sso extends rcube_plugin
     public function gatePasswordChange(array $args): array
     {
         $this->enforceTenantPasswordGate(rcmail::get_instance(), true);
+        return $args;
+    }
+
+    /**
+     * password_change hook — fires only on a successful password change. Sets an
+     * env flag in the AJAX response so the client (avuz-overrides.js) can redirect
+     * to the inbox. Reliable across the settings iframe, unlike the forwarded
+     * confirmation message.
+     */
+    public function flagPasswordChanged(array $args): array
+    {
+        rcmail::get_instance()->output->set_env('avuz_password_changed', true);
         return $args;
     }
 

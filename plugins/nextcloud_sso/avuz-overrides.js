@@ -12,8 +12,6 @@
   rcmail.addEventListener('init', function () {
     var overlay = null;
     var timer = null;
-    var saving = false;
-    var succeeded = false;
 
     // The password form runs inside the settings content iframe; cover the top
     // window so the overlay spans the whole app (same-origin, so accessible).
@@ -55,41 +53,18 @@
       overlay = null;
     }
 
-    rcmail.addEventListener('beforeplugin.password-save', function () {
-      saving = true;
-      succeeded = false;
-      show();
-    });
+    rcmail.addEventListener('beforeplugin.password-save', show);
 
-    // A 'confirmation' message during the save means the password changed.
-    // In a framed settings page rcmail.display_message forwards the message to
-    // the parent window, so the 'message' event fires on parent.rcmail — listen
-    // there too (falls back to self when not framed).
-    function onMessage(prop) {
-      if (saving && prop && prop.type === 'confirmation') {
-        succeeded = true;
-      }
-    }
+    rcmail.addEventListener('responseafterplugin.password-save', function (prop) {
+      // The password_change hook sets this env flag only on success. It arrives
+      // on this iframe's rcmail.env (response.env) before responseafter fires.
+      var ok = rcmail.env.avuz_password_changed
+        || (prop && prop.response && prop.response.env && prop.response.env.avuz_password_changed);
 
-    rcmail.addEventListener('message', onMessage);
-    try {
-      if (window.parent && window.parent.rcmail && window.parent.rcmail !== rcmail) {
-        window.parent.rcmail.addEventListener('message', onMessage);
-      }
-    } catch (e) {
-      /* cross-origin parent — ignore */
-    }
-
-    rcmail.addEventListener('responseafterplugin.password-save', function () {
-      saving = false;
-
-      if (succeeded) {
+      if (ok) {
         // Keep the overlay up and send the whole app to the inbox.
-        try {
-          (window.top || window).location.href = '?_task=mail';
-        } catch (e) {
-          window.location.href = '?_task=mail';
-        }
+        var win = window.top || window;
+        win.location.href = win.location.pathname + '?_task=mail&_mbox=INBOX';
         return;
       }
 
