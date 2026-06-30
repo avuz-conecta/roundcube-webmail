@@ -8,10 +8,27 @@
 // -- Database --
 $config['db_dsnw'] = getenv('ROUNDCUBE_DB_DSN') ?: 'sqlite:////var/www/roundcube/temp/roundcube.db';
 
-// -- IMAP (Zoho) --
-$config['default_host'] = 'ssl://imap.zoho.com';
-$config['default_port'] = 993;
-$config['imap_conn_options'] = ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]];
+// -- IMAP: proxy-gated. IMAP_USE_PROXY=1 → local imapproxy; else direct to Zoho --
+$useProxy = getenv('IMAP_USE_PROXY') === '1';
+if ($useProxy) {
+    $config['default_host']    = '127.0.0.1';
+    $config['default_port']    = 1143;
+    $config['imap_auth_type']  = 'LOGIN'; // imapproxy caches LOGIN, not SASL PLAIN
+    $config['avuz_providers']  = [
+        'zoho'     => ['imap' => '127.0.0.1:1143', 'smtp' => 'tls://smtp.zoho.com:587'],
+        'digrepal' => ['imap' => '127.0.0.2:1143', 'smtp' => 'tls://mail.digrepal.com.br:587'],
+    ];
+    $config['password_hosts']  = ['127.0.0.1']; // only zoho (127.0.0.1) gets the form; digrepal=127.0.0.2
+} else {
+    $config['default_host']    = 'ssl://imap.zoho.com';
+    $config['default_port']    = 993;
+    $config['imap_conn_options'] = ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]];
+    $config['avuz_providers']  = [
+        'zoho'     => ['imap' => 'ssl://imap.zoho.com:993',         'smtp' => 'tls://smtp.zoho.com:587'],
+        'digrepal' => ['imap' => 'tls://mail.digrepal.com.br:143',  'smtp' => 'tls://mail.digrepal.com.br:587'],
+    ];
+    $config['password_hosts']  = ['imap.zoho.com'];
+}
 $config['imap_timeout'] = 15;
 
 // -- SMTP (Zoho) --
@@ -21,18 +38,6 @@ $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['smtp_timeout'] = 15;
 
-// -- Multi-provider map (key -> hosts). NC sends the key in the SSO token.
-// Unknown/missing key falls back to the Zoho defaults above.
-$config['avuz_providers'] = [
-    'zoho' => [
-        'imap' => 'ssl://imap.zoho.com:993',
-        'smtp' => 'tls://smtp.zoho.com:587',
-    ],
-    'digrepal' => [
-        'imap' => 'tls://mail.digrepal.com.br:143',
-        'smtp' => 'tls://mail.digrepal.com.br:587',
-    ],
-];
 
 // -- Cache --
 // Redis if REDIS_HOST is set, otherwise fall back to DB cache
@@ -77,7 +82,6 @@ $config['password_minimum_length']   = 8;
 // own complexity policy (enforced on the reset) cover strength. Re-enable only if the
 // lib is added to the base image.
 $config['password_strength_driver']  = null;
-$config['password_hosts']            = ['imap.zoho.com']; // matches $_SESSION['storage_host'] (bare hostname, no scheme/port)
 $config['avuz_broker_url']           = getenv('AVUZ_BROKER_URL') ?: 'http://broker:9000';
 $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 
@@ -99,6 +103,7 @@ $config['skin_logo'] = [
 ];
 
 // -- UI / Locale --
+$config['refresh_interval'] = 30; // snappier new-mail; cheap once connections are reused
 $config['product_name'] = 'Conecta Mail';
 $config['language'] = 'pt_BR';
 $config['timezone'] = 'America/Sao_Paulo';
