@@ -53,22 +53,18 @@
       overlay = null;
     }
 
+    // Show the overlay while the (full-page) save POST is in flight.
     rcmail.addEventListener('beforeplugin.password-save', show);
 
-    rcmail.addEventListener('responseafterplugin.password-save', function (prop) {
-      // The password_change hook sets this env flag only on success. It arrives
-      // on this iframe's rcmail.env (response.env) before responseafter fires.
-      var ok = rcmail.env.avuz_password_changed
-        || (prop && prop.response && prop.response.env && prop.response.env.avuz_password_changed);
-
-      if (ok) {
-        // Keep the overlay up and send the whole app to the inbox.
-        var win = window.top || window;
-        win.location.href = win.location.pathname + '?_task=mail&_mbox=INBOX';
-        return;
-      }
-
-      hide();
-    });
+    // The save is a full-page form POST, not AJAX — so there is no response
+    // event to hook. On success the page reloads to plugin.password-save with
+    // env.avuz_password_changed set by the password_change hook. Detect it here,
+    // on the freshly loaded result page, and send the top window to the inbox.
+    console.log('[avuz] pwchange init: env flag =', rcmail.env.avuz_password_changed, 'action =', rcmail.env.action);
+    if (rcmail.env.avuz_password_changed) {
+      show();
+      var win = window.top || window;
+      win.location.href = win.location.pathname + '?_task=mail&_mbox=INBOX';
+    }
   });
 })();
