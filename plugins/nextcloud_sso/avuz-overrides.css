@@ -458,7 +458,7 @@ input[type="radio"]:checked + label::before {
   background-color: #ededed !important;
   border: none !important;
   border-radius: 22px !important;
-  padding: 14px 20px !important;
+  padding: 10px 20px !important;
   height: auto !important;
   width: 100% !important;
   box-shadow: none !important;
@@ -489,17 +489,9 @@ input[type="radio"]:checked + label::before {
   color: #fff !important;
 }
 
-/* Muted footer */
+/* Hide the footer (product name line) */
 .task-login #login-footer {
-  color: #9a9a9a !important;
-  text-align: center !important;
-  margin-top: 24px !important;
-}
-
-.task-login #login-footer > div {
-  background: transparent !important;
-  padding: 0 !important;
-  margin-top: 1rem !important;
+  display: none !important;
 }
 
 /* ── Scrollbars ───────────────────────────────────── */
