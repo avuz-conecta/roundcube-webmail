@@ -62,11 +62,23 @@
     });
 
     // A 'confirmation' message during the save means the password changed.
-    rcmail.addEventListener('message', function (prop) {
+    // In a framed settings page rcmail.display_message forwards the message to
+    // the parent window, so the 'message' event fires on parent.rcmail — listen
+    // there too (falls back to self when not framed).
+    function onMessage(prop) {
       if (saving && prop && prop.type === 'confirmation') {
         succeeded = true;
       }
-    });
+    }
+
+    rcmail.addEventListener('message', onMessage);
+    try {
+      if (window.parent && window.parent.rcmail && window.parent.rcmail !== rcmail) {
+        window.parent.rcmail.addEventListener('message', onMessage);
+      }
+    } catch (e) {
+      /* cross-origin parent — ignore */
+    }
 
     rcmail.addEventListener('responseafterplugin.password-save', function () {
       saving = false;
