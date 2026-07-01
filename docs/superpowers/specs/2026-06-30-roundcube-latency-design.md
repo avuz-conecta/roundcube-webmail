@@ -2,7 +2,18 @@
 
 **Date**: 2026-06-30
 **Branch**: avuz-customization
-**Status**: diagnosis confirmed, design hardened after grilling — for review
+**Status**: ABANDONED (2026-07-01) — imapproxy implemented + deployed to staging,
+but up-imapproxy 1.2.8 **segfaults on the LOGIN command** under the modern
+musl/OpenSSL3 toolchain (the function-pointer UB the build's
+`-Wno-incompatible-pointer-types` silenced). Verified along the way: Zoho accepts
+the plaintext LOGIN command, and stunnel→Zoho works — the proxy binary itself is
+the broken link. Code reverted; **decision = escalation: relocate the Roundcube
+container to a US region near Zoho**, which removes the RTT root cause (every
+TLS/SELECT/FETCH round trip), a bigger win than the proxy's ~1s with none of the
+fragility. Relocation is an infra change tracked in avuz-server, not this repo.
+Docs kept as the investigation record.
+
+---
 
 ## History
 
