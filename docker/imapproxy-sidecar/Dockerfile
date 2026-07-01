@@ -5,7 +5,7 @@
 FROM debian:12-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends up-imapproxy stunnel4 ca-certificates \
+ && apt-get install -y --no-install-recommends imapproxy stunnel4 ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /var/run/imapproxy \
  && chown nobody:nogroup /var/run/imapproxy
