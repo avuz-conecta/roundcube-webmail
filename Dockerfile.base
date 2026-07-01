@@ -9,7 +9,7 @@ RUN chmod +x /usr/local/bin/install-php-extensions
 
 RUN install-php-extensions \
   intl mbstring pdo pdo_mysql pdo_sqlite gd zip \
-  openssl ldap redis
+  openssl ldap redis opcache
 
 RUN apk add --no-cache \
   nginx supervisor sqlite \
@@ -36,6 +36,15 @@ RUN { \
   echo 'max_execution_time=120'; \
   echo 'date.timezone=UTC'; \
   echo 'expose_php=Off'; \
+  echo 'opcache.enable=1'; \
+  echo 'opcache.enable_cli=0'; \
+  echo 'opcache.memory_consumption=128'; \
+  echo 'opcache.interned_strings_buffer=16'; \
+  echo 'opcache.max_accelerated_files=20000'; \
+  echo 'opcache.validate_timestamps=1'; \
+  echo 'opcache.revalidate_freq=60'; \
+  echo 'realpath_cache_size=4096K'; \
+  echo 'realpath_cache_ttl=600'; \
   } > /usr/local/etc/php/conf.d/roundcube.ini
 
 RUN mkdir -p /var/log/supervisor /run/nginx /var/cache/nginx \
