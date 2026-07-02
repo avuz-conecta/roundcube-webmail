@@ -12,6 +12,7 @@ class avuz_prefetch extends rcube_plugin
     public $task = 'mail';
 
     private const MAX_UIDS = 10;
+    private const MAX_PART_BYTES = 262144; // 256 KB — skip big images/attachments
 
     function init()
     {
@@ -40,7 +41,17 @@ class avuz_prefetch extends rcube_plugin
                 }
 
                 foreach ($message->mime_parts as $mimeId => $part) {
-                    if (in_array($part->mimetype, ['text/html', 'text/plain'], true)) {
+                    $mimetype    = (string) ($part->mimetype ?? '');
+                    $disposition = strtolower((string) ($part->disposition ?? ''));
+                    $size        = (int) ($part->size ?? 0);
+
+                    $isText = $mimetype === 'text/html' || $mimetype === 'text/plain';
+                    // inline images that render in the body — skip attachments and big parts
+                    $isInlineImage = strpos($mimetype, 'image/') === 0
+                        && $disposition !== 'attachment'
+                        && $size > 0 && $size <= self::MAX_PART_BYTES;
+
+                    if ($isText || $isInlineImage) {
                         // PEEK fetch — populates the cache, never flags \Seen. Discard the body.
                         $message->get_part_body($mimeId, false, 0);
                     }
