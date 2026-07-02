@@ -72,6 +72,7 @@ $config['plugins'] = [
     'zipdownload',
     'managesieve',
     'password',
+    'avuz_prefetch',
 ];
 
 // -- Password change (Zoho via internal broker) --
