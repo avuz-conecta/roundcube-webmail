@@ -36,9 +36,9 @@
     if (!tbody) return out;
     var trs = tbody.getElementsByTagName('tr');
     for (var i = 0; i < trs.length; i++) {
-      var row = lw.rows[trs[i].id];
-      var uid = row && row.uid;
-      if (uid) out.push({ uid: uid, el: trs[i] });
+      // rows are keyed by UID; the DOM id is "rcmrow<uid>"
+      var uid = trs[i].id ? trs[i].id.replace(/^rcmrow/, '') : '';
+      if (uid && lw.rows[uid]) out.push({ uid: uid, el: trs[i] });
     }
     return out;
   }
@@ -94,6 +94,7 @@
     idxOf = new Map();
     ordered.forEach(function (r, i) { idxOf.set(r.el, i); });
 
+    if (window.console) console.debug('avuz_prefetch: observing', ordered.length, 'rows in', mbox);
     if (!ordered.length) return;
 
     if (!('IntersectionObserver' in window)) {
