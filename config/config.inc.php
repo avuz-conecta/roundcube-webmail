@@ -110,6 +110,7 @@ $config['skin_logo'] = [
 $config['product_name'] = 'Conecta Mail';
 $config['language'] = 'pt_BR';
 $config['timezone'] = 'America/Sao_Paulo';
+$config['mail_pagesize'] = 30; // bounds prefetch to 30 bodies/page
 $config['draft_autosave'] = 60;
 $config['show_images'] = 1;
 $config['htmleditor'] = 1;
