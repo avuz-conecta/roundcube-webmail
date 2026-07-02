@@ -46,10 +46,18 @@
     schedule(nextBatch);
   }
 
+  var debounceTimer;
+  function schedulePrefetch() {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(prefetchVisible, 500);
+  }
+
   rcmail.addEventListener('init', function () {
-    // afterlist fires on load AND on page change (next/prev) → covers pagination
-    rcmail.addEventListener('afterlist', prefetchVisible);
-    rcmail.addEventListener('listupdate', prefetchVisible);
-    prefetchVisible();
+    // afterlist: load + page change (pagination). insertrow: rows appended on
+    // scroll (infinite/continuous list). Debounced so a burst = one pass; seen{} dedupes.
+    rcmail.addEventListener('afterlist', schedulePrefetch);
+    rcmail.addEventListener('listupdate', schedulePrefetch);
+    rcmail.addEventListener('insertrow', schedulePrefetch);
+    schedulePrefetch();
   });
 })();
