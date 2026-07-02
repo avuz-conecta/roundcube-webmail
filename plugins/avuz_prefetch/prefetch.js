@@ -31,14 +31,11 @@
 
   function orderedRows() {
     var out = [];
-    var lw = rcmail.message_list;
-    var tbody = lw && (lw.tbody || (lw.list && lw.list.tBodies && lw.list.tBodies[0]));
-    if (!tbody) return out;
-    var trs = tbody.getElementsByTagName('tr');
+    // message rows are <tr id="rcmrow<uid>">, in DOM (display) order
+    var trs = document.querySelectorAll('tr[id^="rcmrow"]');
     for (var i = 0; i < trs.length; i++) {
-      // rows are keyed by UID; the DOM id is "rcmrow<uid>"
-      var uid = trs[i].id ? trs[i].id.replace(/^rcmrow/, '') : '';
-      if (uid && lw.rows[uid]) out.push({ uid: uid, el: trs[i] });
+      var uid = trs[i].id.replace(/^rcmrow/, '');
+      if (uid) out.push({ uid: uid, el: trs[i] });
     }
     return out;
   }
@@ -94,7 +91,7 @@
     idxOf = new Map();
     ordered.forEach(function (r, i) { idxOf.set(r.el, i); });
 
-    if (window.console) console.debug('avuz_prefetch: observing', ordered.length, 'rows in', mbox);
+    if (window.console) console.log('avuz_prefetch: observing', ordered.length, 'rows in', mbox);
     if (!ordered.length) return;
 
     if (!('IntersectionObserver' in window)) {
