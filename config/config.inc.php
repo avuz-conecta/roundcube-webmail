@@ -111,10 +111,10 @@ $config['product_name'] = 'Conecta Mail';
 $config['language'] = 'pt_BR';
 $config['timezone'] = 'America/Sao_Paulo';
 $config['mail_pagesize'] = 30; // bounds prefetch to 30 bodies/page
-// Mark read 1s AFTER the preview opens, as a separate async request — so opening
-// an unread message renders the (cached) body instantly instead of blocking on
-// the \Seen STORE round-trip to Zoho.
-$config['preview_pane_mark_read'] = 1;
+// Mark read 30s after the preview opens, as a separate async request — the cached
+// body renders instantly (no \Seen STORE blocking it), and the read flag only
+// flips after a genuine dwell, so there's no jarring mid-read row re-render.
+$config['preview_pane_mark_read'] = 30;
 $config['draft_autosave'] = 60;
 $config['show_images'] = 1;
 $config['htmleditor'] = 1;
