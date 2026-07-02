@@ -6,6 +6,7 @@ ORG="admin"
 IMAGE_NAME="avuz-roundcube"
 BASE_IMAGE_NAME="avuz-roundcube-base"
 BROKER_IMAGE_NAME="avuz-password-broker"
+SIDECAR_IMAGE_NAME="avuz-imapproxy-sidecar"
 VERSION=${1:-latest}
 ENV=${2:-local}
 
@@ -18,6 +19,8 @@ case $ENV in
     BASE_IMAGE="${BASE_IMAGE_NAME}:latest"
     BROKER_IMAGE_TAG="${BROKER_IMAGE_NAME}:${VERSION}"
     BROKER_IMAGE_TAG_LATEST="${BROKER_IMAGE_NAME}:latest"
+    SIDECAR_IMAGE_TAG="${SIDECAR_IMAGE_NAME}:${VERSION}"
+    SIDECAR_IMAGE_TAG_LATEST="${SIDECAR_IMAGE_NAME}:latest"
     ;;
   staging)
     PLATFORM="linux/amd64"
@@ -27,6 +30,8 @@ case $ENV in
     BASE_IMAGE="${REGISTRY}/${ORG}/${BASE_IMAGE_NAME}:staging"
     BROKER_IMAGE_TAG="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:staging"
     BROKER_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:staging"
+    SIDECAR_IMAGE_TAG="${REGISTRY}/${ORG}/${SIDECAR_IMAGE_NAME}:staging"
+    SIDECAR_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${SIDECAR_IMAGE_NAME}:staging"
     ;;
   prod)
     PLATFORM="linux/amd64"
@@ -36,6 +41,8 @@ case $ENV in
     BASE_IMAGE="${REGISTRY}/${ORG}/${BASE_IMAGE_NAME}:latest"
     BROKER_IMAGE_TAG="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:${VERSION}"
     BROKER_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${BROKER_IMAGE_NAME}:latest"
+    SIDECAR_IMAGE_TAG="${REGISTRY}/${ORG}/${SIDECAR_IMAGE_NAME}:${VERSION}"
+    SIDECAR_IMAGE_TAG_LATEST="${REGISTRY}/${ORG}/${SIDECAR_IMAGE_NAME}:latest"
     ;;
   *)
     echo "Usage: $0 [version] [local|staging|prod]"
@@ -87,4 +94,26 @@ if [ "$PUSH" = true ]; then
   docker push ${BROKER_IMAGE_TAG}
   docker push ${BROKER_IMAGE_TAG_LATEST}
   echo "✓ Pushed ${BROKER_IMAGE_TAG_LATEST}"
+fi
+
+echo "==========================================="
+echo "Building IMAPPROXY SIDECAR image"
+echo "  Image:    ${SIDECAR_IMAGE_TAG}"
+echo "  Platform: ${PLATFORM}"
+echo "  Push:     ${PUSH}"
+echo "==========================================="
+
+docker buildx build \
+  --platform ${PLATFORM} \
+  -t ${SIDECAR_IMAGE_TAG} \
+  -t ${SIDECAR_IMAGE_TAG_LATEST} \
+  --load \
+  docker/imapproxy-sidecar
+
+echo "✓ Build completed: ${SIDECAR_IMAGE_TAG_LATEST}"
+
+if [ "$PUSH" = true ]; then
+  docker push ${SIDECAR_IMAGE_TAG}
+  docker push ${SIDECAR_IMAGE_TAG_LATEST}
+  echo "✓ Pushed ${SIDECAR_IMAGE_TAG_LATEST}"
 fi
