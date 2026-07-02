@@ -130,3 +130,13 @@ ini_set('session.cookie_httponly', '1');
 $config['log_driver'] = 'stdout';
 $config['log_logins'] = true;
 $config['log_session'] = false;
+
+// -- Debug (env-gated) — set ROUNDCUBE_DEBUG=1 in the stack to capture IMAP/SMTP
+// wire logs to logs/imap.log + logs/smtp.log; unset to turn off. getenv() is read
+// live per request, so it's not affected by OPcache. --
+if (getenv('ROUNDCUBE_DEBUG') === '1') {
+    $config['imap_debug'] = true;
+    $config['smtp_debug'] = true;
+    $config['log_driver'] = 'file';
+    $config['log_dir']    = '/var/www/roundcube/logs';
+}
