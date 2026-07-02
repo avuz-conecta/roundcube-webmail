@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REGISTRY="10.50.100.103:8080"
+REGISTRY="registry.avuz.app"
 ORG="admin"
 BASE_IMAGE_NAME="avuz-roundcube-base"
 VERSION=${1:-latest}
