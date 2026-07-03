@@ -35,8 +35,15 @@ ensure_docker() {
 }
 
 cleanup_docker() {
-  if [ "$DOCKER_STARTED_BY_ME" = "1" ] && [ "$(uname -s)" = "Darwin" ]; then
-    echo "Shutting down Docker Desktop (started by this build)..."
-    osascript -e 'quit app "Docker"' >/dev/null 2>&1 || killall Docker >/dev/null 2>&1 || true
+  if [ "$DOCKER_STARTED_BY_ME" != "1" ] || [ "$(uname -s)" != "Darwin" ]; then
+    return 0
   fi
+  echo "Shutting down Docker Desktop (started by this build)..."
+  # Prefer the official CLI (Docker Desktop 4.37+); fall back for older versions.
+  docker desktop stop >/dev/null 2>&1 \
+    || osascript -e 'quit app "Docker Desktop"' >/dev/null 2>&1 \
+    || osascript -e 'quit app "Docker"' >/dev/null 2>&1 \
+    || killall "Docker Desktop" >/dev/null 2>&1 \
+    || killall Docker >/dev/null 2>&1 \
+    || true
 }
