@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib-docker.sh"
+# self-manage Docker unless build-all.sh is orchestrating the whole run
+if [ -z "$DOCKER_MANAGED_EXTERNALLY" ]; then
+  ensure_docker
+  trap cleanup_docker EXIT
+fi
+
 REGISTRY="registry.avuz.app"
 ORG="admin"
 BASE_IMAGE_NAME="avuz-roundcube-base"
