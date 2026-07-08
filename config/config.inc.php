@@ -134,6 +134,10 @@ $config['mime_param_folding'] = 1;
 $config['support_url'] = '';
 $config['display_version'] = false;
 
+// -- Session lifetime (minutes) — default 10 is too short; keep users logged in
+// through a workday. Roundcube also sets PHP session.gc_maxlifetime from this. --
+$config['session_lifetime'] = 480; // 8h
+
 // -- Session cookie — required for iframe embedding across subdomains --
 // SameSite=None allows the session cookie to be sent inside an iframe
 // served from a different subdomain. Requires HTTPS (Secure flag).
