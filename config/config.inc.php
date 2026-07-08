@@ -55,13 +55,13 @@ $config['create_default_folders'] = false;
 // Redis if REDIS_HOST is set, otherwise fall back to DB cache
 $redisHost = getenv('REDIS_HOST');
 if ($redisHost) {
-    $config['redis_hosts'] = [$redisHost . ':' . (getenv('REDIS_PORT') ?: '6379')];
-    $config['imap_cache'] = 'redis';
-    $config['messages_cache_type'] = 'redis';
+    $config['redis_hosts']    = [$redisHost . ':' . (getenv('REDIS_PORT') ?: '6379')];
+    $config['imap_cache']     = 'redis';
+    $config['messages_cache'] = 'redis'; // backend TYPE (was `true` = broken → no message caching)
 } else {
-    $config['imap_cache'] = 'db';
+    $config['imap_cache']     = 'db';
+    $config['messages_cache'] = 'db';
 }
-$config['messages_cache'] = true;
 $config['messages_cache_ttl'] = '10d';
 
 // -- Security --
