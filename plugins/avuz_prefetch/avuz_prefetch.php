@@ -27,6 +27,7 @@ class avuz_prefetch extends rcube_plugin
         $mbox   = (string) rcube_utils::get_input_value('_mbox', rcube_utils::INPUT_POST);
 
         $list = array_slice(array_filter(explode(',', $uids), 'strlen'), 0, self::MAX_UIDS);
+        rcube::write_log('avuz_prefetch', sprintf('REQ mbox=%s uids=%s', $mbox, implode(',', $list)));
 
         foreach ($list as $rawUid) {
             $uid = (int) $rawUid;
@@ -36,28 +37,32 @@ class avuz_prefetch extends rcube_plugin
 
             try {
                 $message = new rcube_message($uid, $mbox !== '' ? $mbox : null);
-                if (empty($message->headers)) {
-                    continue;
-                }
+                $hdr    = empty($message->headers) ? 0 : 1;
+                $nparts = is_array($message->mime_parts) ? count($message->mime_parts) : 0;
+                $warmed = 0;
 
-                foreach ($message->mime_parts as $mimeId => $part) {
-                    $mimetype    = (string) ($part->mimetype ?? '');
-                    $disposition = strtolower((string) ($part->disposition ?? ''));
-                    $size        = (int) ($part->size ?? 0);
+                if ($hdr) {
+                    foreach ($message->mime_parts as $mimeId => $part) {
+                        $mimetype    = (string) ($part->mimetype ?? '');
+                        $disposition = strtolower((string) ($part->disposition ?? ''));
+                        $size        = (int) ($part->size ?? 0);
 
-                    $isText = $mimetype === 'text/html' || $mimetype === 'text/plain';
-                    // inline images that render in the body — skip attachments and big parts
-                    $isInlineImage = strpos($mimetype, 'image/') === 0
-                        && $disposition !== 'attachment'
-                        && $size > 0 && $size <= self::MAX_PART_BYTES;
+                        $isText = $mimetype === 'text/html' || $mimetype === 'text/plain';
+                        $isInlineImage = strpos($mimetype, 'image/') === 0
+                            && $disposition !== 'attachment'
+                            && $size > 0 && $size <= self::MAX_PART_BYTES;
 
-                    if ($isText || $isInlineImage) {
-                        // PEEK fetch — populates the cache, never flags \Seen. Discard the body.
-                        $message->get_part_body($mimeId, false, 0);
+                        if ($isText || $isInlineImage) {
+                            $body = $message->get_part_body($mimeId, false, 0);
+                            $warmed++;
+                            rcube::write_log('avuz_prefetch', sprintf('  uid=%d part=%s type=%s bytes=%d', $uid, $mimeId, $mimetype, strlen((string) $body)));
+                        }
                     }
                 }
-            } catch (Exception $e) {
-                rcube::raise_error("avuz_prefetch uid {$uid}: " . $e->getMessage(), true, false);
+
+                rcube::write_log('avuz_prefetch', sprintf('uid=%d hdr=%d parts=%d warmed=%d', $uid, $hdr, $nparts, $warmed));
+            } catch (Throwable $e) {
+                rcube::write_log('avuz_prefetch', sprintf('uid=%d ERROR %s', $uid, $e->getMessage()));
             }
         }
 
