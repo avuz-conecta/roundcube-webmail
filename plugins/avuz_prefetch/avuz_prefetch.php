@@ -1,33 +1,91 @@
 <?php
 
 /**
- * avuz_prefetch — warm the message cache for the top messages in the list so a
- * click serves the body from cache (Redis) instead of a fresh Brazil→Zoho fetch.
+ * avuz_prefetch — instant message opens against a remote IMAP (Zoho).
  *
- * Fetches body parts with BODY.PEEK only — it NEVER sets \Seen. Opening a message
- * later still marks it read normally.
+ * Roundcube's own messages_cache does NOT persist body content (rcube_imap_cache
+ * strips $msg->body), so we keep our own redis-backed body cache:
+ *
+ *   1. prefetch(): a background request warms the text bodies of the visible list
+ *      page, storing each into our cache (keyed folder:uid:mime_id).
+ *   2. serve_cached_body(): the 'message_part_body' hook (fires before the IMAP
+ *      fetch in rcube_message::get_part_body) sets $part->body from our cache, so
+ *      Roundcube's `if ($part->body === null) fetch` is skipped → no IMAP round-trip.
+ *
+ * Text parts only (html/plain). Bodies fetched with BODY.PEEK: never sets \Seen.
  */
 class avuz_prefetch extends rcube_plugin
 {
     public $task = 'mail';
 
     private const MAX_UIDS = 10;
-    private const MAX_PART_BYTES = 262144; // 256 KB — skip big images/attachments
+    private const TTL      = '10d';
+
+    /** @var rcube_cache|false|null */
+    private $bodyCache;
 
     function init()
     {
         $this->register_action('plugin.avuz_prefetch', [$this, 'prefetch']);
+        $this->add_hook('message_part_body', [$this, 'serve_cached_body']);
         $this->include_script('prefetch.js');
     }
 
+    /** redis-backed, per-user body cache (false if unavailable, e.g. not logged in) */
+    private function cache()
+    {
+        if ($this->bodyCache === null) {
+            $this->bodyCache = rcmail::get_instance()->get_cache('avuz_body', 'redis', self::TTL) ?: false;
+        }
+        return $this->bodyCache;
+    }
+
+    private function key($folder, $uid, $mimeId)
+    {
+        return $folder . ':' . $uid . ':' . $mimeId;
+    }
+
+    private function is_text($part)
+    {
+        $m = (string) ($part->mimetype ?? '');
+        return $m === 'text/html' || $m === 'text/plain';
+    }
+
+    /**
+     * Hook: serve a cached text body. Setting $part->body makes rcube_message's
+     * `if ($part->body === null) { ...fetch... }` skip the IMAP fetch.
+     */
+    function serve_cached_body($args)
+    {
+        $part = $args['part'];
+        if ($part->body !== null || !$this->is_text($part)) {
+            return $args;
+        }
+
+        $cache = $this->cache();
+        if (!$cache) {
+            return $args;
+        }
+
+        $message = $args['object'];
+        $cached  = $cache->get($this->key($message->folder, $message->uid, $part->mime_id));
+        if (is_string($cached) && $cached !== '') {
+            $part->body = $cached;
+        }
+
+        return $args;
+    }
+
+    /** Background: fetch text bodies for the given uids and store them in our cache. */
     function prefetch()
     {
         $rcmail = rcmail::get_instance();
         $uids   = (string) rcube_utils::get_input_value('_uids', rcube_utils::INPUT_POST);
         $mbox   = (string) rcube_utils::get_input_value('_mbox', rcube_utils::INPUT_POST);
+        $mbox   = $mbox !== '' ? $mbox : null;
 
-        $list = array_slice(array_filter(explode(',', $uids), 'strlen'), 0, self::MAX_UIDS);
-        rcube::write_log('avuz_prefetch', sprintf('REQ mbox=%s uids=%s', $mbox, implode(',', $list)));
+        $cache = $this->cache();
+        $list  = array_slice(array_filter(explode(',', $uids), 'strlen'), 0, self::MAX_UIDS);
 
         foreach ($list as $rawUid) {
             $uid = (int) $rawUid;
@@ -36,37 +94,27 @@ class avuz_prefetch extends rcube_plugin
             }
 
             try {
-                $message = new rcube_message($uid, $mbox !== '' ? $mbox : null);
-                $hdr    = empty($message->headers) ? 0 : 1;
-                $nparts = is_array($message->mime_parts) ? count($message->mime_parts) : 0;
-                $warmed = 0;
-
-                if ($hdr) {
-                    foreach ($message->mime_parts as $mimeId => $part) {
-                        $mimetype    = (string) ($part->mimetype ?? '');
-                        $disposition = strtolower((string) ($part->disposition ?? ''));
-                        $size        = (int) ($part->size ?? 0);
-
-                        $isText = $mimetype === 'text/html' || $mimetype === 'text/plain';
-                        $isInlineImage = strpos($mimetype, 'image/') === 0
-                            && $disposition !== 'attachment'
-                            && $size > 0 && $size <= self::MAX_PART_BYTES;
-
-                        if ($isText || $isInlineImage) {
-                            $body = $message->get_part_body($mimeId, false, 0);
-                            $warmed++;
-                            rcube::write_log('avuz_prefetch', sprintf('  uid=%d part=%s type=%s bytes=%d', $uid, $mimeId, $mimetype, strlen((string) $body)));
-                        }
-                    }
+                $message = new rcube_message($uid, $mbox);
+                if (empty($message->headers)) {
+                    continue;
                 }
 
-                rcube::write_log('avuz_prefetch', sprintf('uid=%d hdr=%d parts=%d warmed=%d', $uid, $hdr, $nparts, $warmed));
+                foreach ($message->mime_parts as $mimeId => $part) {
+                    if (!$this->is_text($part)) {
+                        continue;
+                    }
+                    // get_part_body fires our hook first (cache miss on first run) →
+                    // then BODY.PEEK fetch → we store the result for next time.
+                    $body = $message->get_part_body($mimeId, false, 0);
+                    if ($cache && is_string($body) && $body !== '') {
+                        $cache->set($this->key($message->folder, $uid, $mimeId), $body);
+                    }
+                }
             } catch (Throwable $e) {
-                rcube::write_log('avuz_prefetch', sprintf('uid=%d ERROR %s', $uid, $e->getMessage()));
+                rcube::raise_error("avuz_prefetch uid {$uid}: " . $e->getMessage(), true, false);
             }
         }
 
-        // Empty ACK — the JS ignores the payload; the side effect (warm cache) is the point.
         $rcmail->output->send();
     }
 }
