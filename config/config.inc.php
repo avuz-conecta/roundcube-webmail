@@ -121,10 +121,11 @@ $config['product_name'] = 'Conecta Mail';
 $config['language'] = 'pt_BR';
 $config['timezone'] = 'America/Sao_Paulo';
 $config['mail_pagesize'] = 30; // bounds prefetch to 30 bodies/page
-// mail_read_time is the real 1.6 option (preview_pane_mark_read is ignored). >0
-// defers the \Seen STORE to a separate client request N seconds after open, so
-// the open itself isn't blocked by the round-trip to Zoho. 0 = mark synchronously.
-$config['mail_read_time'] = 1;
+// mail_read_time (the real 1.6 option; preview_pane_mark_read is ignored). 0 =
+// mark \Seen immediately on open (reliable — even quick glances mark read). A
+// positive value defers N seconds but then quick switches never mark read. The
+// STORE is only ~1 round-trip; the body is cached, so keep marking reliable.
+$config['mail_read_time'] = 0;
 $config['draft_autosave'] = 60;
 $config['show_images'] = 1;
 $config['htmleditor'] = 1;
@@ -136,7 +137,7 @@ $config['display_version'] = false;
 
 // -- Session lifetime (minutes) — default 10 is too short; keep users logged in
 // through a workday. Roundcube also sets PHP session.gc_maxlifetime from this. --
-$config['session_lifetime'] = 480; // 8h
+$config['session_lifetime'] = 10080; // 1 week (7 * 24 * 60 min)
 
 // -- Session cookie — required for iframe embedding across subdomains --
 // SameSite=None allows the session cookie to be sent inside an iframe
