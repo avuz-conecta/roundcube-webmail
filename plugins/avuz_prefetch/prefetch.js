@@ -12,11 +12,13 @@
   var mbox = '';
 
   function pageUids() {
+    // Roundcube base64-encodes the uid in the row DOM id, so read the real uid
+    // from the row object (rcmail.message_list.rows[*].uid) instead of the id.
     var out = [];
-    var trs = document.querySelectorAll('tr[id^="rcmrow"]');
-    for (var i = 0; i < trs.length; i++) {
-      var uid = trs[i].id.replace(/^rcmrow/, '');
-      if (uid) out.push(uid);
+    var rows = (rcmail.message_list && rcmail.message_list.rows) || {};
+    for (var id in rows) {
+      var row = rows[id];
+      if (row && row.uid) out.push(String(row.uid));
     }
     return out;
   }
