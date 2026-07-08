@@ -41,6 +41,16 @@ $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['smtp_timeout'] = 15;
 
+// -- Special folders — Zoho uses IMAP SPECIAL-USE flags with localized (pt_BR)
+// names. Match them explicitly so Roundcube uses the folders that actually exist
+// instead of trying to CREATE "Drafts"/"Sent"/… (which fails: "Folder exists").
+$config['drafts_mbox']            = 'Rascunho';
+$config['sent_mbox']              = 'Enviadas';
+$config['trash_mbox']             = 'Lixeira';
+$config['junk_mbox']              = 'Spam';
+$config['archive_mbox']           = 'Archive';
+$config['create_default_folders'] = false;
+
 // -- Cache --
 // Redis if REDIS_HOST is set, otherwise fall back to DB cache
 $redisHost = getenv('REDIS_HOST');
