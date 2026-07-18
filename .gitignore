@@ -30,3 +30,7 @@ skins/elastic/styles/_variables.less
 
 # phpunit result cache
 tests/.phpunit.result.cache
+
+# portainer exec/logs secrets (token) — keep only the .example
+scripts/deploy.env
+scripts/deploy.prod.env
