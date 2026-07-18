@@ -23,6 +23,10 @@ COPY plugins/nextcloud_sso /var/www/roundcube/plugins/nextcloud_sso
 COPY plugins/avuz_prefetch /var/www/roundcube/plugins/avuz_prefetch
 COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
 COPY skins/avuz /var/www/roundcube/skins/avuz
+# Core patches (overlay individual patched files from the release tarball).
+# rcube_washtml.php: '=' base64-padding fix — without this COPY the build uses
+# the stock (buggy) file and blank-signature images persist. See customizations.json.
+COPY program/lib/Roundcube/rcube_washtml.php /var/www/roundcube/program/lib/Roundcube/rcube_washtml.php
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \
