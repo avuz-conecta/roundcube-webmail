@@ -561,3 +561,11 @@ input[type="radio"]:checked + label::before {
 ::-webkit-scrollbar-thumb:hover {
   background-color: #2bb5e3;
 }
+
+/* ── Compose: always show CC ──────────────────────────
+   Elastic hides #compose_cc until the field has a value or the
+   user clicks "add". Most Avuz clients CC on every mail, so keep
+   it visible. ID+class beats elastic's `.hidden{display:none!important}`. */
+#compose_cc.hidden {
+  display: flex !important;
+}
