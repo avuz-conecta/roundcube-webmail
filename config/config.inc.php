@@ -58,6 +58,12 @@ if ($redisHost) {
     $config['redis_hosts']    = [$redisHost . ':' . (getenv('REDIS_PORT') ?: '6379')];
     $config['imap_cache']     = 'redis';
     $config['messages_cache'] = 'redis'; // backend TYPE (was `true` = broken → no message caching)
+    // Sessions on Redis, NOT the SQLite DB. Symptom: HTML-signature images saved
+    // 100% blank. Cause: the image upload records its temp-file ref via a session
+    // write; with sessions on SQLite the write hit "database is locked" (session +
+    // cache contend on one file), the ref was lost, and on save attach_images()
+    // found no file → stripped the <img src> → white image. Redis has no such lock.
+    $config['session_storage'] = 'redis';
 } else {
     $config['imap_cache']     = 'db';
     $config['messages_cache'] = 'db';
@@ -130,6 +136,9 @@ $config['draft_autosave'] = 60;
 $config['show_images'] = 1;
 $config['htmleditor'] = 1;
 $config['mime_param_folding'] = 1;
+// Max size (KB) of images embedded in HTML signatures (stored as data URIs).
+// Upstream default 64 truncates client logos/banners; doubled to 128.
+$config['identity_image_size'] = 128;
 
 // -- Privacy --
 $config['support_url'] = '';
