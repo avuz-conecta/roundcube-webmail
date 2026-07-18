@@ -23,11 +23,13 @@
       "id": "nextcloud-sso-plugin",
       "type": "plugin",
       "paths": [
-        "plugins/nextcloud_sso/nextcloud_sso.php"
+        "plugins/nextcloud_sso/nextcloud_sso.php",
+        "plugins/nextcloud_sso/avuz-overrides.css",
+        "plugins/nextcloud_sso/avuz-overrides.js"
       ],
-      "description": "SSO plugin that reads ?nc_token= from the Nextcloud roundcube app, validates HMAC-SHA256 signature, decrypts the password with AES-256-CBC, and auto-authenticates the user. Falls back to login form if token is absent or invalid.",
+      "description": "SSO plugin that reads ?nc_token= from the Nextcloud roundcube app, validates HMAC-SHA256 signature, decrypts the password with AES-256-CBC, and auto-authenticates the user. Falls back to login form if token is absent or invalid. Also injects avuz-overrides.css/js on every in-app page (brand colors + compose UX; forces the compose CC field always-visible).",
       "risk": "low",
-      "notes": "Requires ROUNDCUBE_SSO_SECRET and ROUNDCUBE_CREDENTIAL_KEY env vars on both Roundcube and Nextcloud containers. Token TTL is 60 seconds."
+      "notes": "Requires ROUNDCUBE_SSO_SECRET and ROUNDCUBE_CREDENTIAL_KEY env vars on both Roundcube and Nextcloud containers. Token TTL is 60 seconds. avuz-overrides.css #compose_cc rule depends on Elastic's `.hidden{display:none!important}` — verify on upgrade."
     },
     {
       "id": "roundcube-config",
@@ -35,7 +37,7 @@
       "paths": [
         "config/config.inc.php"
       ],
-      "description": "Roundcube config: Zoho IMAP (imap.zoho.com:993 SSL) and SMTP (smtp.zoho.com:587 TLS), Redis/DB cache with messages_cache enabled, pt_BR locale, 'Conecta Mail' product name.",
+      "description": "Roundcube config: Zoho IMAP (imap.zoho.com:993 SSL) and SMTP (smtp.zoho.com:587 TLS), Redis/DB cache with messages_cache enabled, session_storage=redis when REDIS_HOST is set (SQLite sessions hit 'database is locked', causing dropped session writes and premature logouts — NOT the blank-signature bug, which was washtml; see washtml-base64-padding-fix), pt_BR locale, 'Conecta Mail' product name, identity_image_size=128 (doubled from upstream 64) for larger HTML-signature images.",
       "risk": "low",
       "notes": "All secrets come from env vars. ROUNDCUBE_DES_KEY must never change after first deploy or stored passwords become unreadable."
     },
@@ -95,6 +97,17 @@
       "description": "In-repo reference copy of the hand-edited Portainer stack: roundcube + redis + broker services, their env vars, volumes, and depends_on wiring. Not deployed directly — Portainer is edited by hand and should be kept in sync with this file.",
       "risk": "low",
       "notes": "Source of truth for intended topology since there is no git-backed docker-compose deploy. Update this file whenever the live Portainer stack changes, and vice versa."
+    },
+    {
+      "id": "washtml-base64-padding-fix",
+      "type": "core-patch",
+      "paths": [
+        "program/lib/Roundcube/rcube_washtml.php",
+        "Dockerfile"
+      ],
+      "description": "One-char fix at rcube_washtml.php:431 — add '=' to the data-URI base64 validation class ([^0-9a-z\\s/+] -> [^0-9a-z\\s/+=]). Upstream 1.6.14 (commit fde14d01a) omitted the base64 padding char, so it stripped the src of any embedded image whose byte length isn't a multiple of 3, saving HTML signatures 100% blank. Verified: padded base64 survives, malicious non-base64 payloads still blocked.",
+      "risk": "low",
+      "notes": "Core file patch — re-verify on upstream upgrade; upstream may fix this line differently. Security-sensitive (the line is part of a remote-image-blocking hardening); '=' is a legit base64 char so allowing it does not weaken the check. IMPORTANT: the Dockerfile downloads the stock release tarball and overlays only listed files — a core patch has NO effect unless a matching `COPY program/lib/...` line exists in Dockerfile (added under 'Core patches'). Any future core-file patch needs its own COPY line."
     }
   ]
 }
