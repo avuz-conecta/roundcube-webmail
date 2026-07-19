@@ -413,7 +413,7 @@ git commit -m "chore(migrate): pre-scan for invalid utf8 + dangling fk rows"
 
 **Interfaces:**
 - Consumes: `pg-oneshot.sh` (psql against postgres), `scripts/portainer-exec.sh` (sqlite3/php against roundcube), the row-parity baselines from Global Constraints.
-- Produces: `verify.sh <endpoint_id> <stack_prefix> <roundcube_container>` — runs the full gate; exits 0 only if every check passes.
+- Produces: `verify.sh <endpoint_id> <stack_prefix> <roundcube_container> [sqlite_filename]` — runs the full gate; exits 0 only if every check passes. `sqlite_filename` (default `roundcube.db`) MUST be the same snapshot the migration loaded from, so the comparison is exact with zero drift (rehearsal passes `rehearsal.db`).
 
 - [ ] **Step 1: Write the verifier**
 
@@ -430,13 +430,16 @@ git commit -m "chore(migrate): pre-scan for invalid utf8 + dangling fk rows"
 # the live smoke test (login loads+unserializes users.preferences; signature
 # displays) in Tasks 9/11.
 #
-# Usage: verify.sh <endpoint_id> <stack_prefix> <roundcube_container>
+# Usage: verify.sh <endpoint_id> <stack_prefix> <roundcube_container> [sqlite_filename]
+# sqlite_filename (default roundcube.db) MUST be the exact snapshot the migration
+# loaded from — rehearsal passes rehearsal.db so PG and SQLite are compared with
+# zero drift (exact parity required; no "acceptable mismatch" escape hatch).
 set -euo pipefail
 D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EID="${1:?}"; STACK="${2:?}"; C="${3:?}"
+EID="${1:?}"; STACK="${2:?}"; C="${3:?}"; SQLITE_FILE="${4:-roundcube.db}"
 NET="${STACK}_default"
 PGURI="postgresql://roundcube:${ROUNDCUBE_PG_PASSWORD:?set ROUNDCUBE_PG_PASSWORD}@postgres:5432/roundcube"
-DB=/var/www/roundcube/temp/roundcube.db
+DB="/var/www/roundcube/temp/$SQLITE_FILE"
 # scalar helpers: run a single query, return the lone value with whitespace stripped
 SQ(){ "$D/../portainer-exec.sh" -u www-data "$C" sh -c "sqlite3 \"$DB\" \"$1\"" | tr -d '[:space:]'; }
 PG(){ "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
@@ -595,10 +598,10 @@ Expected: prints counts. If NOT clean, record offending rows and decide fix/drop
 Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/migrate.sh 5 avuz-mail-roundcube rehearsal.db`
 Expected: `== migrate.sh done ==`; pgloader loads all 7 tables with rows-read == rows-imported (inspect its summary in the output).
 
-- [ ] **Step 5: Verify content integrity on the rehearsal**
+- [ ] **Step 5: Verify content integrity on the rehearsal (exact, against the snapshot)**
 
-Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/verify.sh 5 avuz-mail-roundcube avuz-mail-roundcube-roundcube-1`
-Expected: `VERIFY: PASS` with prod baselines (users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4). NOTE: verify.sh compares against the LIVE `roundcube.db`; since `rehearsal.db` was a copy taken at Step 1 and prod is still live, small drift in `collected_addresses` is acceptable and expected — investigate only structural failures (signature md5, contacts, identities, FK).
+Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/verify.sh 5 avuz-mail-roundcube avuz-mail-roundcube-roundcube-1 rehearsal.db`
+Expected: `VERIFY: PASS` — EXACT parity, because both sides derive from the same `rehearsal.db` snapshot (the 4th arg makes the SQLite side read `rehearsal.db`, not live). Baselines at snapshot time: users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses ~333. Any `FAIL` is a real migration defect — no drift exemption. Fix and re-run 10.3–10.6 until clean.
 
 - [ ] **Step 6: Tear down the rehearsal (keep prod pristine)**
 
