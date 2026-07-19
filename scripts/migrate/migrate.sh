@@ -63,9 +63,12 @@ DROP_FK_B64="$(printf '%s' "$DROP_FK" | base64 | tr -d '\n')"
   "echo '$DROP_FK_B64' | base64 -d > /tmp/dropfk.sql && PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -f /tmp/dropfk.sql && echo fks-dropped"
 
 echo "== 4. pgloader (data only, 7 tables) =="
-LOAD_B64="$(sed "s|{{PG_DSN}}|$PG_DSN|" "$D/roundcube.load" | sed "s|/data/roundcube.db|/data/$SQLITE|" | base64 | tr -d '\n')"
+# Copy the SQLite db to the container's writable /tmp first: the volume is mounted
+# read-only (so the real db is never touched), but SQLite must open its file
+# read-write (journal/lock) or it fails CANTOPEN. pgloader reads the /tmp copy.
+LOAD_B64="$(sed "s|{{PG_DSN}}|$PG_DSN|; s|{{SRC}}|/tmp/src.db|" "$D/roundcube.load" | base64 | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" "$PGLOADER_IMAGE" "$VOL" \
-  "echo '$LOAD_B64' | base64 -d > /tmp/m.load && pgloader /tmp/m.load"
+  "cp /data/$SQLITE /tmp/src.db && echo '$LOAD_B64' | base64 -d > /tmp/m.load && pgloader /tmp/m.load"
 
 echo "== 5. reset sequences =="
 SEQ_B64="$(base64 < "$D/reset-sequences.sql" | tr -d '\n')"

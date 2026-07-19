@@ -1,5 +1,5 @@
 LOAD DATABASE
-     FROM sqlite:///data/roundcube.db
+     FROM sqlite://{{SRC}}
      INTO {{PG_DSN}}
 
  WITH data only, workers = 2, concurrency = 1, on error stop
