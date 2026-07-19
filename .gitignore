@@ -34,3 +34,6 @@ tests/.phpunit.result.cache
 # portainer exec/logs secrets (token) — keep only the .example
 scripts/deploy.env
 scripts/deploy.prod.env
+
+# local PG password scratch (never commit)
+scripts/migrate/*-pg-password
