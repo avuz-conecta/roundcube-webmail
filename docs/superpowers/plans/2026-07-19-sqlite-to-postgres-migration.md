@@ -20,6 +20,7 @@
 - Portainer configs: staging `scripts/deploy.env`, prod `scripts/deploy.prod.env` (via `PORTAINER_ENV_FILE`). Both gitignored.
 - Row parity baselines — staging: users 4, identities 4, collected_addresses 17, contacts 0, contactgroups 0, contactgroupmembers 0, responses 0. Prod: users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4.
 - Container/DB paths: SQLite at `/var/www/roundcube/temp/roundcube.db`; Roundcube schema at `/var/www/roundcube/SQL/postgres.initial.sql`; roundcube service name `roundcube`, postgres service name `postgres`, redis `redis`.
+- **PREREQUISITE — PHP `pdo_pgsql` driver:** the roundcube image must be built with `pdo_pgsql` (added to `Dockerfile.base`), or every Postgres query fails `DB Error: could not find driver`. Rebuild base + app + redeploy BEFORE flipping any stack's DSN to Postgres. (The image shipped SQLite-only: `pdo pdo_mysql pdo_sqlite`.)
 - **pgloader is PINNED** to `dimitri/pgloader:3.6.9` (never `:latest`). During rehearsal, record the resolved image digest and set `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>` for the prod cutover so rehearsal and cutover run the provably identical build.
 
 ---
