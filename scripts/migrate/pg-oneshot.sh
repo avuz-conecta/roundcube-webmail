@@ -23,10 +23,12 @@ BASE="$PORTAINER_URL/api/endpoints/$EID/docker"
 api -X POST "$BASE/images/create?fromImage=$IMAGE" >/dev/null || true
 
 BINDS='[]'; [ "$VOL" != "-" ] && BINDS="$(jq -nc --arg v "$VOL" '[$v + ":/data:ro"]')"
-# Tty:true => the logs endpoint returns raw bytes (no 8-byte multiplex frame
-# headers), so psql/pgloader output comes back clean and parseable.
+# Tty:FALSE on purpose: a TTY makes interactive-aware tools (psql!) start a pager
+# and block forever. With no TTY, stdout is a pipe -> psql/pgloader run
+# non-interactively and print clean output. The tradeoff is the /logs stream is
+# then multiplexed with 8-byte frame headers, which we de-frame below.
 BODY="$(jq -n --arg img "$IMAGE" --arg net "$NET" --arg cmd "$CMD" --argjson binds "$BINDS" \
-  '{Image:$img, Tty:true, Cmd:["sh","-lc",$cmd], HostConfig:{Binds:$binds, NetworkMode:$net, AutoRemove:false}}')"
+  '{Image:$img, Tty:false, Cmd:["sh","-lc",$cmd], HostConfig:{Binds:$binds, NetworkMode:$net, AutoRemove:false}}')"
 CID="$(api -X POST -H 'Content-Type: application/json' -d "$BODY" "$BASE/containers/create?name=migrate-oneshot-$$" | jq -r '.Id')"
 [ -n "$CID" ] && [ "$CID" != null ] || die "create failed"
 
@@ -36,7 +38,14 @@ trap cleanup EXIT
 api -X POST "$BASE/containers/$CID/start" >/dev/null
 # Wait for exit, capture status code.
 CODE="$(api -X POST "$BASE/containers/$CID/wait" | jq -r '.StatusCode')"
-# Raw logs (Tty:true => no frame headers). stderr is merged into stdout.
-api "$BASE/containers/$CID/logs?stdout=1&stderr=1" || true
+# De-frame the multiplexed docker log stream: each frame is
+# [stream(1) 0 0 0 size(4 big-endian)] + payload. Concatenate all payloads.
+api "$BASE/containers/$CID/logs?stdout=1&stderr=1" 2>/dev/null | python3 -c '
+import sys,struct
+d=sys.stdin.buffer.read(); i=0; o=[]
+while i+8<=len(d):
+    n=struct.unpack(">I", d[i+4:i+8])[0]; i+=8; o.append(d[i:i+n]); i+=n
+sys.stdout.buffer.write(b"".join(o) if o else d)
+' 2>/dev/null || true
 echo "[oneshot exit=$CODE]"
 exit "${CODE:-1}"
