@@ -20,6 +20,7 @@
 - Portainer configs: staging `scripts/deploy.env`, prod `scripts/deploy.prod.env` (via `PORTAINER_ENV_FILE`). Both gitignored.
 - Row parity baselines — staging: users 4, identities 4, collected_addresses 17, contacts 0, contactgroups 0, contactgroupmembers 0, responses 0. Prod: users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4.
 - Container/DB paths: SQLite at `/var/www/roundcube/temp/roundcube.db`; Roundcube schema at `/var/www/roundcube/SQL/postgres.initial.sql`; roundcube service name `roundcube`, postgres service name `postgres`, redis `redis`.
+- **pgloader is PINNED** to `dimitri/pgloader:3.6.9` (never `:latest`). During rehearsal, record the resolved image digest and set `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>` for the prod cutover so rehearsal and cutover run the provably identical build.
 
 ---
 
@@ -287,6 +288,9 @@ NET="${STACK}_default"
 VOL="${STACK}_roundcube_temp"     # named volume backing /var/www/roundcube/temp
 PG_DSN="pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD:?set ROUNDCUBE_PG_PASSWORD}@postgres/roundcube"
 PGURI="postgresql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres:5432/roundcube"
+# Pinned pgloader — NEVER :latest (non-reproducible + abandoned build). Override
+# with a @sha256:... digest for the cutover, recorded during rehearsal.
+PGLOADER_IMAGE="${PGLOADER_IMAGE:-dimitri/pgloader:3.6.9}"
 
 echo "== 0. SAFETY GUARD (this script's first act is DROP SCHEMA) =="
 Q(){ "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
@@ -329,7 +333,7 @@ DO \$\$ DECLARE r record; BEGIN
 
 echo "== 4. pgloader (data only, 7 tables) =="
 LOAD_B64="$(sed "s|{{PG_DSN}}|$PG_DSN|" "$D/roundcube.load" | sed "s|/data/roundcube.db|/data/$SQLITE|" | base64 | tr -d '\n')"
-"$D/pg-oneshot.sh" "$EID" "$NET" dimitri/pgloader:latest "$VOL" \
+"$D/pg-oneshot.sh" "$EID" "$NET" "$PGLOADER_IMAGE" "$VOL" \
   "echo '$LOAD_B64' | base64 -d > /tmp/m.load && pgloader /tmp/m.load"
 
 echo "== 5. reset sequences =="
@@ -610,10 +614,13 @@ Expected: `accepting connections`
 Run: `export ROUNDCUBE_PG_PASSWORD=<prod-pw>; PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/prescan.sh avuz-mail-roundcube-roundcube-1`
 Expected: prints counts. If NOT clean, record offending rows and decide fix/drop before proceeding — do NOT cut over until clean.
 
-- [ ] **Step 4: Rehearse the migration against the copy**
+- [ ] **Step 4: Rehearse the migration against the copy (time it + lock the pgloader digest)**
 
-Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/migrate.sh 5 avuz-mail-roundcube rehearsal.db`
+Run: `time PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/migrate.sh 5 avuz-mail-roundcube rehearsal.db`
 Expected: `== migrate.sh done ==`; pgloader loads all 7 tables with rows-read == rows-imported (inspect its summary in the output).
+- Record the wall-clock from `time` — this is the only prod-scale measurement of the load and sizes the cutover maintenance window (staging has 0 contacts, so it tells you nothing about 11.5k).
+- Capture the resolved pgloader digest for the cutover:
+  Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/pg-oneshot.sh 5 avuz-mail-roundcube_default postgres:16-alpine - 'echo skip' ; ` then read the image digest from Portainer (Images → dimitri/pgloader) and set `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>` for Task 11.
 
 - [ ] **Step 5: Verify content integrity on the rehearsal (exact, against the snapshot)**
 
