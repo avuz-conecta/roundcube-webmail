@@ -57,7 +57,10 @@ $redisHost = getenv('REDIS_HOST');
 if ($redisHost) {
     $config['redis_hosts']    = [$redisHost . ':' . (getenv('REDIS_PORT') ?: '6379')];
     $config['imap_cache']     = 'redis';
-    $config['messages_cache'] = 'redis'; // backend TYPE (was `true` = broken → no message caching)
+    // messages_cache is DB-only in Roundcube (rcube_imap_cache uses the SQL handle);
+    // the value is only tested for truthiness. 'db' = cache messages in the main DB.
+    // Safe now that the DB is Postgres (concurrent writers, no whole-file lock).
+    $config['messages_cache'] = 'db';
     // Sessions on Redis, NOT the SQLite DB. Symptom: HTML-signature images saved
     // 100% blank. Cause: the image upload records its temp-file ref via a session
     // write; with sessions on SQLite the write hit "database is locked" (session +
