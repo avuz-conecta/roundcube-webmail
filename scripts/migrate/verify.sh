@@ -20,7 +20,7 @@ NET="${STACK}_default"
 PGURI="postgresql://roundcube:${ROUNDCUBE_PG_PASSWORD:?set ROUNDCUBE_PG_PASSWORD}@postgres:5432/roundcube"
 DB="/var/www/roundcube/temp/$SQLITE_FILE"
 # scalar helpers: run a single query, return the lone value with whitespace stripped
-SQ(){ "$D/../portainer-exec.sh" -u www-data "$C" sh -c "sqlite3 \"$DB\" \"$1\"" | tr -d '[:space:]'; }
+SQ(){ "$D/../portainer-exec.sh" -u www-data "$C" sh -c "sqlite3 -noheader -list \"$DB\" \"$1\"" | tr -d '[:space:]'; }
 PG(){ "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
       "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -tAc \"$1\" 2>/dev/null" \
       | grep -v '^\[oneshot exit=' | tr -d '[:space:]'; }
