@@ -16,9 +16,10 @@ NET="${STACK}_default"
 VOL="${STACK}_roundcube_temp"     # named volume backing /var/www/roundcube/temp
 PG_DSN="pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD:?set ROUNDCUBE_PG_PASSWORD}@postgres/roundcube"
 PGURI="postgresql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres:5432/roundcube"
-# Pinned pgloader — NEVER :latest (non-reproducible + abandoned build). Override
-# with a @sha256:... digest for the cutover, recorded during rehearsal.
-PGLOADER_IMAGE="${PGLOADER_IMAGE:-dimitri/pgloader:3.6.9}"
+# dimitri/pgloader only publishes :latest (no version tags exist). Reproducibility
+# comes from pinning the DIGEST: resolve :latest -> @sha256 at rehearsal and pass
+# PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest> for the cutover.
+PGLOADER_IMAGE="${PGLOADER_IMAGE:-dimitri/pgloader:latest}"
 
 echo "== 0. SAFETY GUARD (this script's first act is DROP SCHEMA) =="
 Q(){ "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
