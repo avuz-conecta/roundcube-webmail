@@ -1,0 +1,13 @@
+LOAD DATABASE
+     FROM sqlite:///data/roundcube.db
+     INTO {{PG_DSN}}
+
+ WITH data only,
+      workers = 2, concurrency = 1,
+      on error stop
+
+ INCLUDING ONLY TABLE NAMES MATCHING
+      'users', 'identities', 'contacts', 'contactgroups',
+      'contactgroupmembers', 'collected_addresses', 'responses'
+
+ SET work_mem to '64MB', maintenance_work_mem to '128MB';
