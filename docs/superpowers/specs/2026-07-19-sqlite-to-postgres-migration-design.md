@@ -36,7 +36,7 @@ Real prod payload ≈ **12,000 rows across 7 tables**. The 321 MB prod DB is ~99
 ### Why this is low-risk
 - **No passwords in the DB.** Roundcube keeps the IMAP password in the (Redis) session, encrypted with `des_key` — never in `users`. Nothing password-shaped to break; users re-auth via SSO.
 - **Cache is discarded, not migrated.** Postgres starts with empty cache tables; Roundcube refills from IMAP on first use. No stale-cache risk.
-- **SQLite is never modified.** The migration reads SQLite and writes Postgres. Rollback = point the DSN back.
+- **SQLite is never modified.** The migration only reads SQLite. A clean SQLite rollback exists in the pre-write window right after cutover; past that, recovery is forward-on-Postgres + `pg_dump` (see Rollback). Confidence comes from the prod-data rehearsal, not from an indefinite fallback.
 
 ## Architecture
 
@@ -62,37 +62,59 @@ Rationale for in-stack (vs one shared Postgres): matches the established per-sta
 6. **Reset sequences (explicit)** — for every table with a serial PK, run `SELECT setval(pg_get_serial_sequence('<table>','<idcol>'), COALESCE(MAX(<idcol>),0)+1, false) FROM <table>;`. Do not rely on pgloader to do this in data-only mode. Covers `users.user_id`, `identities.identity_id`, `contacts.contact_id`, `contactgroups.contactgroup_id`, `collected_addresses.collected_address_id`, `responses.response_id`.
 7. **Flip config** — set `ROUNDCUBE_DB_DSN` to the Postgres DSN; set `messages_cache='db'` (now safe on a concurrent DB — regains header/bodystructure caching without the lock storm). Update the config comment that currently says `'redis'`.
 8. **Restart `roundcube`** — comes up on Postgres.
+9. **Run the verification gate** (below) immediately, before announcing availability — this is the last clean SQLite-rollback point.
+10. **Baseline `pg_dump`** — once verified, capture a `pg_dump` as the day-2+ recovery artifact.
+
+## Rehearsal (prod-data dry run) — the primary risk control
+
+Staging has only 4 clean users; it cannot surface what prod's ~12k rows will (odd encodings, malformed vcards, dangling group members, oversized signatures). So before any live prod cutover, rehearse the **exact** migration against a **copy of real prod data**, with zero user impact:
+
+1. **Copy prod `roundcube.db`** out to a scratch host (the file copies safely while prod runs; this doubles as the pre-cutover backup).
+2. **Run the full procedure** (schema init → pgloader → sequence reset) against that copy into a **throwaway** Postgres. Repeat until clean.
+3. **Pre-scan for encoding gremlins**: check every text column of the prod SQLite copy for invalid UTF-8 and list offending rows *before* migrating; decide fix vs drop per row.
+4. Run the full **content-integrity verification** (below) against the rehearsal Postgres.
+
+Only when a rehearsal passes cleanly does the real prod cutover proceed — it is then a re-run of the identical, already-proven procedure inside the window.
 
 ## Verification (gate — must pass before declaring done)
 
-- **Row parity**: each migrated table's Postgres count equals the pre-migration SQLite count (users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4 on prod).
-- **Login**: a real user logs in via SSO.
-- **Signature renders**: a known user's HTML signature (with embedded image) displays — end-to-end proof identities migrated intact.
-- **Autocomplete**: composing shows collected/contact addresses.
+Row counts alone do NOT prove correctness; verify content:
+
+- **Row parity**: each migrated table's Postgres count equals the source SQLite count (prod: users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4).
+- **Signature fidelity**: per-row md5 of `identities.signature` matches SQLite vs Postgres (byte-for-byte proof signatures survived, incl. embedded base64 images).
+- **Contact fidelity**: `contacts.vcard` checksums match; non-null vcard count matches.
+- **Preferences deserialize**: every `users.preferences` value still `unserialize()`s in PHP (no truncation/encoding damage to the serialized blob).
+- **FK integrity**: zero `contactgroupmembers` referencing a missing contact or group (Postgres FKs reject these; SQLite silently allowed them — pre-scan and resolve).
+- **pgloader summary**: rows-read == rows-imported for all 7 tables; zero rejected rows in the pgloader log.
 - **Sequences**: creating a new identity/contact assigns a fresh id with no primary-key collision.
+- **Live smoke**: a real user logs in via SSO, their HTML signature (with image) renders, autocomplete shows addresses.
 - **Logs**: `errors.log` shows no `database is locked` and no DB errors after cutover.
 
-## Rollback
+## Rollback (forward-only, short window) + disaster recovery
 
-SQLite volume is left intact and unmodified. If verification fails or issues appear:
-1. Revert `ROUNDCUBE_DB_DSN` to the SQLite default and `messages_cache` to its prior value.
-2. Redeploy the stack.
-3. Roundcube is back on SQLite exactly as before. Postgres data is discarded.
+**Rollback to SQLite is a first-minutes-only option.** The moment Postgres takes live writes (a saved signature, a collected address), those writes exist *only* in Postgres; reverting the DSN to the untouched SQLite would silently lose them. There is no reverse-migration (rejected as YAGNI — it trusts a second lossy conversion and hedges a scenario that `pg_dump` covers better).
 
-Zero data loss because SQLite was read-only throughout.
+Therefore:
+1. **Point of no return**: immediately after cutover, run the verification gate. If it fails, revert `ROUNDCUBE_DB_DSN` to SQLite + restore `messages_cache`, redeploy — no data lost because no user has written yet. This is the only clean SQLite rollback.
+2. **After users are writing**: do not roll back to SQLite. Fix forward on Postgres.
+3. **Disaster recovery** (day-2+ safety net): a `pg_dump` taken right after cutover and on a schedule. Any later "restore" means restoring Postgres from a `pg_dump`, never round-tripping to SQLite.
+
+The rehearsal is what makes the short rollback window acceptable: prod-shaped data is proven to migrate cleanly *before* the window opens.
 
 ## Rollout order
 
-1. **Staging** (`avuz-mail-roundcube-2`) end-to-end: run the full procedure + verification, prove the pgloader mapping and sequence reset on real (small) data.
-2. **Prod** (`avuz-mail-roundcube`, endpoint 5) in a scheduled window, same procedure, same verification.
+1. **Staging** (`avuz-mail-roundcube-2`) end-to-end: prove the procedure + verification tooling on real (small) data.
+2. **Prod rehearsal**: run the full migration against a copy of prod's SQLite offline; pass the content-integrity gate. Iterate until clean.
+3. **Prod cutover** (`avuz-mail-roundcube`, endpoint 5) in a scheduled window: re-run the proven procedure, pass the gate live.
 
 ## Out of scope
 
 - Endpoint 9's `avuz-mail-roundcube` stack.
 - Zero-downtime cutover (unjustified for ~12k rows of largely static data).
+- Reverse migration Postgres→SQLite (rejected: trusts a second lossy conversion; `pg_dump` is the correct day-2 recovery artifact).
 - Changing Redis usage (sessions, imap_cache, avuz_prefetch stay as-is).
-- Ongoing Postgres backups/HA (worth a follow-up, not this migration).
+- Postgres HA/replication and a recurring backup schedule (a one-off post-cutover `pg_dump` IS in scope as the DR baseline; automating cadence is a follow-up).
 
 ## Open questions
 
-None blocking. Postgres backup cadence and monitoring are a sensible follow-up task, tracked separately.
+None blocking. Automating `pg_dump` cadence + monitoring is a sensible follow-up task, tracked separately.
