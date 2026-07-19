@@ -56,8 +56,10 @@ DO \$\$ DECLARE r record; BEGIN
   FOR r IN SELECT * FROM _fk_backup LOOP
     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.name);
   END LOOP; END \$\$;"
+# base64 -> file -> psql -f so no shell (host or container) touches the SQL's '$$'.
+DROP_FK_B64="$(printf '%s' "$DROP_FK" | base64 | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
-  "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -c \"$DROP_FK\" && echo fks-dropped"
+  "echo '$DROP_FK_B64' | base64 -d > /tmp/dropfk.sql && PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -f /tmp/dropfk.sql && echo fks-dropped"
 
 echo "== 4. pgloader (data only, 7 tables) =="
 LOAD_B64="$(sed "s|{{PG_DSN}}|$PG_DSN|" "$D/roundcube.load" | sed "s|/data/roundcube.db|/data/$SQLITE|" | base64 | tr -d '\n')"
@@ -75,7 +77,8 @@ READD_FK="DO \$\$ DECLARE r record; BEGIN
     EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s', r.tbl, r.name, r.def);
   END LOOP; END \$\$;
 DROP TABLE _fk_backup;"
+READD_FK_B64="$(printf '%s' "$READD_FK" | base64 | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
-  "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -c \"$READD_FK\" && echo fks-revalidated"
+  "echo '$READD_FK_B64' | base64 -d > /tmp/readdfk.sql && PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -f /tmp/readdfk.sql && echo fks-revalidated"
 
 echo "== migrate.sh done =="
