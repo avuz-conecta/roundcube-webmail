@@ -265,7 +265,7 @@ git commit -m "chore(migrate): portainer one-shot container helper"
 
 **Interfaces:**
 - Consumes: `pg-oneshot.sh`, `postgres.initial.sql`, `roundcube.load`, `reset-sequences.sql`, `scripts/portainer-exec.sh`.
-- Produces: `migrate.sh <endpoint_id> <stack_prefix> <sqlite_path>` — initializes the in-stack Postgres schema, runs pgloader from `<sqlite_path>` (a path inside the roundcube_temp volume) into `postgres`, resets sequences. Idempotent schema init (drops+recreates public schema first).
+- Produces: `migrate.sh <endpoint_id> <stack_prefix> <sqlite_path>` — guards against wiping a live DB, then initializes the in-stack Postgres schema, drops FKs, runs pgloader from `<sqlite_path>` (a path inside the roundcube_temp volume), resets sequences, re-adds+validates FKs. Refuses if the target has a `migration_complete` marker (live prod) or, when the target already holds users, unless `FORCE_WIPE=1` is set (intentional rehearsal re-run). Schema init drops+recreates the public schema, so a permitted run is idempotent.
 
 - [ ] **Step 1: Write the orchestrator**
 
@@ -287,6 +287,23 @@ NET="${STACK}_default"
 VOL="${STACK}_roundcube_temp"     # named volume backing /var/www/roundcube/temp
 PG_DSN="pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD:?set ROUNDCUBE_PG_PASSWORD}@postgres/roundcube"
 PGURI="postgresql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres:5432/roundcube"
+
+echo "== 0. SAFETY GUARD (this script's first act is DROP SCHEMA) =="
+Q(){ "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
+     "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -tAc \"$1\" 2>/dev/null" \
+     | grep -v '^\[oneshot exit=' | tr -d '[:space:]'; }
+# Guard A: a completed cutover stamps migration_complete. NEVER wipe such a DB —
+# not even with FORCE_WIPE. It is live production.
+if [ "$(Q "SELECT to_regclass('public.migration_complete') IS NOT NULL;")" = "t" ]; then
+  die "REFUSING: target Postgres carries a migration_complete marker = LIVE PRODUCTION. Will not wipe."
+fi
+# Guard B: a populated target (rehearsal leftovers) requires an explicit opt-in.
+if [ "$(Q "SELECT to_regclass('public.users') IS NOT NULL;")" = "t" ]; then
+  n="$(Q "SELECT count(*) FROM users;")"; n="${n:-0}"
+  if [ "$n" -gt 0 ] && [ "${FORCE_WIPE:-0}" != "1" ]; then
+    die "REFUSING: target already has $n users. Set FORCE_WIPE=1 to intentionally wipe (rehearsal re-run ONLY, never live prod)."
+  fi
+fi
 
 echo "== 1. reset schema (drop+recreate public) =="
 "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
@@ -668,7 +685,18 @@ Log in via SSO as a real user, confirm signature renders + autocomplete. Then:
 Run: `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/logs.sh avuz-mail-roundcube-roundcube-1 errors grep "database is locked"`
 Expected: no NEW lock lines after cutover timestamp.
 
-- [ ] **Step 10: Baseline pg_dump (day-2 recovery artifact)**
+- [ ] **Step 10: Stamp `migration_complete` (arms the wipe-guard forever)**
+
+Once the live smoke passes, mark this Postgres as production so `migrate.sh` can never wipe it again (Guard A), even with `FORCE_WIPE=1`.
+Run:
+```bash
+export ROUNDCUBE_PG_PASSWORD=<prod-pw>
+PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/pg-oneshot.sh 5 avuz-mail-roundcube_default postgres:16-alpine - \
+  "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql 'postgresql://roundcube:$ROUNDCUBE_PG_PASSWORD@postgres:5432/roundcube' -v ON_ERROR_STOP=1 -c \"CREATE TABLE IF NOT EXISTS migration_complete (completed_at timestamptz NOT NULL DEFAULT now(), note text); INSERT INTO migration_complete(note) VALUES ('sqlite->pg cutover');\" && echo stamped"
+```
+Expected: `stamped`. (Harmless extra table; Roundcube ignores it.)
+
+- [ ] **Step 11: Baseline pg_dump (day-2 recovery artifact)**
 
 Run:
 ```bash
@@ -684,5 +712,6 @@ Expected: a non-empty SQL dump saved locally as the recovery baseline.
 ## Notes for the executor
 
 - **`stack_prefix` vs container names:** Docker Compose/Portainer name the network `<stack>_default`, volumes `<stack>_<volname>`, containers `<stack>-<service>-1`. Verify the exact volume name once with `docker volume ls` via a one-shot (`pg-oneshot.sh <eid> <net> postgres:16-alpine - 'echo'` then inspect) if `migrate.sh`'s pgloader step can't find `/data/roundcube.db`.
-- **pgloader `on error stop`** means a single bad row aborts the load — that's intentional; fix the row (pre-scan) and re-run. The schema is dropped+recreated at the start of `migrate.sh`, so re-runs are safe and idempotent.
+- **pgloader `on error stop`** means a single bad row aborts the load — that's intentional; fix the row (pre-scan) and re-run.
+- **`migrate.sh` wipe-guard:** it drops+recreates the schema, so it refuses to run against a populated target unless `FORCE_WIPE=1`, and refuses ALWAYS (even with `FORCE_WIPE`) once `migration_complete` exists. During rehearsal iterations, either run Task 10 Step 6 teardown between attempts (leaves an empty target — no flag needed) or re-run with `FORCE_WIPE=1 scripts/migrate/migrate.sh ...`. The prod cutover load (Task 11 Step 5) runs against an empty target (rehearsal torn down), so it needs no flag; Step 10 then stamps `migration_complete` and the DB can never be wiped again.
 - **Rollback is forward-only after users write** (see spec). The pre-reopen verify gate (Step 6) is the last clean SQLite rollback point.
