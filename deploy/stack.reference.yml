@@ -11,11 +11,12 @@ services:
     depends_on:
       - redis
       - broker
+      - postgres
     volumes:
       - roundcube_temp:/var/www/roundcube/temp
       - roundcube_logs:/var/www/roundcube/logs
     environment:
-      - ROUNDCUBE_DB_DSN=
+      - ROUNDCUBE_DB_DSN=pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres/roundcube
       - ROUNDCUBE_DES_KEY=$ROUNDCUBE_DES_KEY
       - ROUNDCUBE_SSO_SECRET=$ROUNDCUBE_SSO_SECRET
       - ROUNDCUBE_CREDENTIAL_KEY=$ROUNDCUBE_CREDENTIAL_KEY
@@ -46,7 +47,23 @@ services:
     volumes:
       - roundcube_redis:/data
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=roundcube
+      - POSTGRES_DB=roundcube
+      - POSTGRES_PASSWORD=${ROUNDCUBE_PG_PASSWORD}
+    volumes:
+      - roundcube_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roundcube -d roundcube"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   roundcube_temp:
   roundcube_logs:
   roundcube_redis:
+  roundcube_pg:
