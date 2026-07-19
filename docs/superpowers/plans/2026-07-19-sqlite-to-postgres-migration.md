@@ -297,15 +297,37 @@ SCHEMA_B64="$(base64 < "$D/postgres.initial.sql" | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
   "echo '$SCHEMA_B64' | base64 -d > /tmp/s.sql && PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -f /tmp/s.sql >/dev/null && echo schema-loaded"
 
-echo "== 3. pgloader (data only, 7 tables) =="
+echo "== 3. capture + drop FK constraints (so pgloader load order is irrelevant) =="
+# Persist FK defs in a real table (temp tables don't survive across one-shot psql
+# containers). Re-added with validation in step 6 — that IS the FK integrity gate.
+DROP_FK="CREATE TABLE IF NOT EXISTS _fk_backup AS
+  SELECT conrelid::regclass::text AS tbl, conname::text AS name, pg_get_constraintdef(oid) AS def
+  FROM pg_constraint WHERE contype='f';
+DO \$\$ DECLARE r record; BEGIN
+  FOR r IN SELECT * FROM _fk_backup LOOP
+    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.name);
+  END LOOP; END \$\$;"
+"$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
+  "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -c \"$DROP_FK\" && echo fks-dropped"
+
+echo "== 4. pgloader (data only, 7 tables) =="
 LOAD_B64="$(sed "s|{{PG_DSN}}|$PG_DSN|" "$D/roundcube.load" | sed "s|/data/roundcube.db|/data/$SQLITE|" | base64 | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" dimitri/pgloader:latest "$VOL" \
   "echo '$LOAD_B64' | base64 -d > /tmp/m.load && pgloader /tmp/m.load"
 
-echo "== 4. reset sequences =="
+echo "== 5. reset sequences =="
 SEQ_B64="$(base64 < "$D/reset-sequences.sql" | tr -d '\n')"
 "$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
   "echo '$SEQ_B64' | base64 -d > /tmp/seq.sql && PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -f /tmp/seq.sql && echo sequences-reset"
+
+echo "== 6. re-add FK constraints (VALIDATES every referencing row = integrity gate) =="
+READD_FK="DO \$\$ DECLARE r record; BEGIN
+  FOR r IN SELECT * FROM _fk_backup LOOP
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s', r.tbl, r.name, r.def);
+  END LOOP; END \$\$;
+DROP TABLE _fk_backup;"
+"$D/pg-oneshot.sh" "$EID" "$NET" postgres:16-alpine - \
+  "PGPASSWORD='$ROUNDCUBE_PG_PASSWORD' psql '$PGURI' -v ON_ERROR_STOP=1 -c \"$READD_FK\" && echo fks-revalidated"
 
 echo "== migrate.sh done =="
 ```
