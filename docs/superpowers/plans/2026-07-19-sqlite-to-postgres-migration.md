@@ -12,9 +12,15 @@
 
 ---
 
-## ⏸ STATUS / RESUME HERE (updated 2026-07-19)
+## ✅ STATUS — COMPLETE (2026-07-20)
 
-**Tasks 1–9 DONE. Staging (`avuz-mail-roundcube-2`, endpoint 3) is fully migrated to Postgres, content-verified, running clean.** Remaining: **Task 10 (prod rehearsal)** and **Task 11 (prod cutover)** on prod stack `avuz-mail-roundcube`, **endpoint 5**.
+**ALL DONE. Staging AND prod are migrated to Postgres, content-verified, running clean.**
+- Staging (`avuz-mail-roundcube-2`, ep3): migrated + validated.
+- **Prod (`avuz-mail-roundcube`, ep5): rehearsed on real 12k rows (PASS), cut over live, verified (row parity SQLite==PG exact), `migration_complete` stamped, baseline `pg_dump` taken.** Prod runs on the new `:latest` image (Postgres + `pdo_pgsql` + avuz_filters). Prod PG password in `scripts/migrate/.prod-pg-password`.
+- Endpoint 9's `avuz-mail-roundcube` was left untouched (out of scope; it was also unreachable).
+- Follow-up (not blocking): automate a recurring `pg_dump`, disk-space alert (see spec's Postgres-ops section).
+
+Historical resume notes below (kept for reference):
 
 **⚠ The committed scripts in `scripts/migrate/` are the SOURCE OF TRUTH.** The inline code blocks in Tasks 4–7 below were the first draft; the staging run surfaced 7 bugs, all fixed in the committed scripts (and mostly synced here). When executing prod, RUN THE COMMITTED SCRIPTS, use the task text for the *procedure/order*.
 
