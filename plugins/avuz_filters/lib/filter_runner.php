@@ -132,9 +132,16 @@ class avuz_filter_runner
     {
         try {
             $storage = $rcmail->get_storage();
-            $rawHead = $storage->get_raw_headers($uid);
-            $rawBody = $storage->get_raw_body($uid);
-            if (!$rawHead || $rawBody === false || $rawBody === null) return;
+            // get_raw_body() returns the ENTIRE message source (headers + body), so
+            // split it once — do NOT also pull get_raw_headers or the header block
+            // ends up duplicated (gmail rejects: "multiple To headers", 550 5.7.1).
+            $raw = $storage->get_raw_body($uid);
+            if (!$raw) return;
+            $sep = "\r\n\r\n"; $pos = strpos($raw, $sep);
+            if ($pos === false) { $sep = "\n\n"; $pos = strpos($raw, $sep); }
+            if ($pos === false) return;
+            $rawHead = substr($raw, 0, $pos);
+            $rawBody = substr($raw, $pos + strlen($sep));
 
             $msg      = new rcube_message((string) $uid, $folder);
             $origFrom = trim((string) ($msg->headers->from ?? ''));
@@ -145,6 +152,9 @@ class avuz_filter_runner
                 'Return-Path'      => null,   // drop
                 'Sender'           => $user,
                 'From'             => $user,  // Zoho only relays mail from the authed user
+                'To'               => $to,    // single To = the target (matches envelope RCPT)
+                'Cc'               => null,   // drop original Cc/Bcc — single recipient
+                'Bcc'              => null,
                 'Reply-To'         => $origFrom ?: null,
                 'Message-ID'       => $mid,
                 'DKIM-Signature'   => null,   // invalid after rewrite → drop
