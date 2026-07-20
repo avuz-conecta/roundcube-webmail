@@ -107,6 +107,19 @@ The rehearsal is what makes the short rollback window acceptable: prod-shaped da
 2. **Prod rehearsal**: run the full migration against a copy of prod's SQLite offline; pass the content-integrity gate. Iterate until clean.
 3. **Prod cutover** (`avuz-mail-roundcube`, endpoint 5) in a scheduled window: re-run the proven procedure, pass the gate live.
 
+## Postgres operations (running it in a container)
+
+Postgres-in-a-container is fine at this scale (~100 users, small DB); container overhead is negligible and bare metal would add a machine to manage without removing any of the real risks below. Keep it in the stack. The risks are operational, not the container itself:
+
+- **Backups — VM snapshots are not sufficient alone.** A filesystem/VM snapshot of a *running* Postgres is only safe if crash-consistent, and can never restore a single table/user. Add a **scheduled logical `pg_dump`** (consistent, portable, granular) — the actual restore artifact. VM snapshot = whole-machine DR; `pg_dump` = the safety net you restore from. Baseline `pg_dump` is taken at cutover (migration procedure step 10); automate a daily one as a follow-up.
+- **Accidental volume deletion.** "Remove stack" (with volumes) or `docker volume prune` wipes `roundcube_pg` instantly; the `migration_complete` marker guards re-migration, not the volume. Operational rule: never prune volumes on this host; recovery is `pg_dump` + snapshot.
+- **Disk full = hard outage.** A full host disk stops Postgres writes → roundcube login/identities/contacts fail. Monitor the volume's disk space + alert.
+- **Major-version upgrades are not a tag bump.** `postgres:16` → `17` needs `pg_upgrade` or dump/restore (data dir is version-specific). Image is pinned to `16-alpine`; never let it drift to another major without a planned migration.
+- **SPOF / HA.** One container, one host — same failure profile as the SQLite it replaces (and roundcube is single-instance too), so no regression. Real HA (replication/failover) is a separate later project; recovery here is snapshot + `pg_dump`.
+- **Resource/connection tuning.** Default alpine config is modest (`max_connections=100`, small `shared_buffers`). Fine now; watch connection count once the planned filter daemon adds persistent connections. Light tuning (`shared_buffers`, `work_mem`) and host-RAM headroom suffice; add pgbouncer only if connections grow.
+
+**Minimum ops to add:** scheduled `pg_dump`, disk-space monitoring/alert, pinned major version (done), and a documented "don't delete the volume" rule.
+
 ## Out of scope
 
 - Endpoint 9's `avuz-mail-roundcube` stack.
