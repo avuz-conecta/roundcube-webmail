@@ -50,6 +50,57 @@ class avuz_filters extends rcube_plugin
         $rcmail->output->send();
     }
 
+    function settings_menu($args)
+    {
+        $args['actions'][] = [
+            'action' => 'plugin.avuz_filters',
+            'class'  => 'filter',
+            'label'  => 'filters',
+            'title'  => 'filters',
+            'domain' => 'avuz_filters',
+        ];
+        return $args;
+    }
+
+    function ui_index()
+    {
+        $rcmail = rcmail::get_instance();
+        $this->include_script('avuz_filters.js');
+        $this->include_stylesheet($this->local_skin_path() . '/filters.css');
+        $store = new avuz_rules_store($rcmail->get_dbh());
+        $rcmail->output->set_env('avuz_filters', $store->list_rules((int) $rcmail->user->ID));
+        $rcmail->output->set_env('avuz_folders', array_keys($rcmail->get_storage()->list_folders_subscribed()));
+        $rcmail->output->add_handler('avuzfilterslist', [$this, 'html_list']);
+        $rcmail->output->set_pagetitle($this->gettext('filters'));
+        $rcmail->output->send('avuz_filters.filters');
+    }
+
+    /** Server-rendered rule list container (JS fills rows from env). */
+    function html_list($attrib)
+    {
+        if (empty($attrib['id'])) $attrib['id'] = 'avuz-filters-list';
+        return html::tag('table', $attrib, html::tag('tbody', ['id' => $attrib['id'] . '-body'], ''));
+    }
+
+    function ui_save()
+    {
+        $rcmail = rcmail::get_instance();
+        $raw  = rcube_utils::get_input_value('_rule', rcube_utils::INPUT_POST, true);
+        $rule = json_decode($raw, true) ?: [];
+        $id   = (new avuz_rules_store($rcmail->get_dbh()))->save_rule((int) $rcmail->user->ID, $rule);
+        $rcmail->output->command('plugin.avuz_filters_saved', ['id' => $id]);
+        $rcmail->output->send();
+    }
+
+    function ui_delete()
+    {
+        $rcmail = rcmail::get_instance();
+        $id = (int) rcube_utils::get_input_value('_id', rcube_utils::INPUT_POST);
+        (new avuz_rules_store($rcmail->get_dbh()))->delete_rule((int) $rcmail->user->ID, $id);
+        $rcmail->output->command('plugin.avuz_filters_deleted', ['id' => $id]);
+        $rcmail->output->send();
+    }
+
     /** Idempotent — CREATE TABLE IF NOT EXISTS from SQL/postgres.sql. */
     function ensure_schema()
     {

@@ -1,0 +1,59 @@
+<roundcube:object name="doctype" value="html5" />
+<html>
+<head>
+  <title><roundcube:object name="pagetitle" /></title>
+  <roundcube:include file="/includes/links.html" />
+</head>
+<body class="iframe fullheight">
+
+<roundcube:object name="message" id="message" class="statusbar" />
+
+<div class="formcontent" id="avuz-filters">
+  <div class="boxtitle"><roundcube:label name="avuz_filters.filters" /></div>
+
+  <div class="notice" id="avuz-zoho-note"><roundcube:label name="avuz_filters.zohonote" /></div>
+
+  <div class="listbox">
+    <roundcube:object name="avuzfilterslist" id="avuz-filters-list" class="propform records-table" />
+  </div>
+
+  <div class="formbuttons">
+    <roundcube:button command="plugin.avuz_filters.add" type="input" class="button create" label="avuz_filters.addfilter" />
+    <roundcube:button command="plugin.avuz_filters.apply_existing" type="input" class="button" label="avuz_filters.applyexisting" />
+  </div>
+
+  <!-- Editor (shown by JS when adding/editing a rule) -->
+  <div id="avuz-filter-editor" style="display:none">
+    <fieldset>
+      <legend><roundcube:label name="avuz_filters.filter" /></legend>
+      <label><roundcube:label name="avuz_filters.filtername" />
+        <input type="text" id="af-name" /></label>
+      <label><roundcube:label name="avuz_filters.enabled" />
+        <input type="checkbox" id="af-enabled" checked="checked" /></label>
+      <label><roundcube:label name="avuz_filters.scope" />
+        <select id="af-match">
+          <option value="all"><roundcube:label name="avuz_filters.matchall" /></option>
+          <option value="any"><roundcube:label name="avuz_filters.matchany" /></option>
+        </select></label>
+    </fieldset>
+    <fieldset>
+      <legend><roundcube:label name="avuz_filters.rules" /></legend>
+      <div id="af-conditions"></div>
+      <a href="#" id="af-add-cond">+ <roundcube:label name="avuz_filters.addcondition" /></a>
+    </fieldset>
+    <fieldset>
+      <legend><roundcube:label name="avuz_filters.actions" /></legend>
+      <div id="af-actions"></div>
+      <a href="#" id="af-add-action">+ <roundcube:label name="avuz_filters.addaction" /></a>
+    </fieldset>
+    <div class="formbuttons">
+      <input type="button" id="af-save" class="button mainaction submit" value="" />
+      <input type="button" id="af-delete" class="button delete" value="" />
+      <input type="button" id="af-cancel" class="button" value="" />
+    </div>
+  </div>
+</div>
+
+<roundcube:include file="/includes/footer.html" />
+</body>
+</html>
