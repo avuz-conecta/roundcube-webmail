@@ -337,8 +337,8 @@ class avuz_rules_store
         $res = $this->db->query(
             'SELECT last_uid, uidvalidity FROM avuz_filter_state WHERE user_id=? AND folder=?', $user, $folder);
         $r = $this->db->fetch_assoc($res);
-        return $r ? ['last_uid'=>(int)$r['last_uid'], 'uidvalidity'=>isset($r['uidvalidity'])?(int)$r['uidvalidity']:null]
-                  : ['last_uid'=>0, 'uidvalidity'=>null];
+        return $r ? ['exists'=>true, 'last_uid'=>(int)$r['last_uid'], 'uidvalidity'=>isset($r['uidvalidity'])?(int)$r['uidvalidity']:null]
+                  : ['exists'=>false, 'last_uid'=>0, 'uidvalidity'=>null];
     }
 
     function set_state(int $user, string $folder, int $lastUid, ?int $uidv): void
@@ -411,14 +411,24 @@ class avuz_filter_runner
         $folder  = 'INBOX';
         $trash   = $rcmail->config->get('trash_mbox') ?: 'Trash';
 
-        $state = $store->get_state($user, $folder);
-        $fdata = $storage->folder_data($folder);
-        $uidv  = isset($fdata['UIDVALIDITY']) ? (int) $fdata['UIDVALIDITY'] : null;
-        // UIDVALIDITY reset → start forward from current, don't reprocess history.
-        $last  = ($from_scratch || ($state['uidvalidity'] && $uidv && $state['uidvalidity'] !== $uidv))
-               ? 0 : $state['last_uid'];
+        $state   = $store->get_state($user, $folder);
+        $fdata   = $storage->folder_data($folder);
+        $uidv    = isset($fdata['UIDVALIDITY']) ? (int) $fdata['UIDVALIDITY'] : null;
+        $uidnext = isset($fdata['UIDNEXT'])     ? (int) $fdata['UIDNEXT']     : null;
 
-        // UID search for new messages.
+        // COLD START (no state row) or UIDVALIDITY reset: seed the watermark to the
+        // current top of the mailbox and process NOTHING. Existing/historical mail is
+        // ONLY ever touched by the explicit "apply to existing" action (from_scratch).
+        // Without this, first login would mass-move/-delete the entire inbox.
+        $uidv_reset = $state['exists'] && $state['uidvalidity'] && $uidv && $state['uidvalidity'] !== $uidv;
+        if (!$from_scratch && (!$state['exists'] || $uidv_reset)) {
+            $seed = $uidnext ? $uidnext - 1 : 0;   // next new mail has UID >= UIDNEXT > seed
+            $store->set_state($user, $folder, $seed, $uidv);
+            return 0;
+        }
+        $last = $from_scratch ? 0 : $state['last_uid'];
+
+        // UID search for new messages (or ALL when applying to existing on demand).
         $criteria = $from_scratch ? 'ALL' : ('UID ' . ($last + 1) . ':*');
         $index    = $storage->search_once($folder, $criteria);       // returns rcube_result_index
         $uids     = $index ? $index->get() : [];
