@@ -749,6 +749,15 @@ Exercise the filter end-to-end in the running app (create rule → deliver mail 
 
 ---
 
+## Known limitations / hardening backlog (post-V1)
+
+Surfaced by grilling; none corrupt data (the two that did — retroactive first-run and dropped actions — are fixed in Tasks 3–4). Track these for a follow-up:
+
+- **`apply to existing` lowers the watermark.** `from_scratch` processes the oldest ≤1,000 and sets `last_uid` to that batch's top; if filters were already running, this drags `last_uid` backward and normal passes re-scan the middle. Harmless (idempotent — already-moved mail is gone from INBOX; non-matching mail still doesn't match), but wasteful, and a >1,000 mailbox needs several refresh cycles to fully drain. Fix: process newest-first and/or never lower an existing watermark (take `max(current, processed)`).
+- **Missing target folder.** If a rule's move-target folder was deleted, `move_message` fails → caught globally → the message stays and `last_uid` still advances past it, so it's never filtered even if the folder returns. Fix: validate/auto-create the target, or don't advance the watermark past a failed action.
+- **Concurrent passes.** Overlapping requests (login + check-recent) can both read the same `last_uid` and process the same UIDs. Idempotent (double `set_flag` is fine; moving an already-moved message fails silently), so no corruption — just occasional double work. Fix: a per-user advisory lock (`pg_try_advisory_lock`) around a pass.
+- **Move-during-list-render (cosmetic).** `new_messages` fires during check-recent; moving mail out of INBOX in that same request may make Roundcube report those as "new" to the client for one cycle (brief flicker before they settle in the right folder). Inherent to post-delivery filtering. Confirm it's cosmetic in Task 9's live test; if jarring, defer the pass to run just before the list query rather than during the new-mail notification.
+
 ## Notes for the executor
 
 - **Prerequisite:** Postgres must be the DB (migration done on staging; prod after cutover). The plugin's `ensure_schema()` needs a Postgres connection.
