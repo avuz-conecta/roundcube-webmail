@@ -148,16 +148,18 @@ class avuz_filter_runner
             $user     = $rcmail->get_user_email();
             $mid      = $rcmail->gen_message_id($user);
 
-            $head = self::rewrite_headers($rawHead, [
-                'Return-Path'      => null,   // drop
+            // Keep ONLY content headers from the original + add clean identity headers.
+            // Dropping the original routing/auth headers (Received, Authentication-Results,
+            // ARC-*, DKIM, Return-Path, X-*, original From/To/…) is what keeps gmail from
+            // spam-foldering: otherwise From=avuz.cloud but the headers show a gmail origin,
+            // which reads as spoofing. The result is a clean avuz.cloud-authored message
+            // that passes SPF/DKIM/DMARC on our domain.
+            $head = self::forward_headers($rawHead, [
+                'From'             => $user,
                 'Sender'           => $user,
-                'From'             => $user,  // Zoho only relays mail from the authed user
-                'To'               => $to,    // single To = the target (matches envelope RCPT)
-                'Cc'               => null,   // drop original Cc/Bcc — single recipient
-                'Bcc'              => null,
+                'To'               => $to,
                 'Reply-To'         => $origFrom ?: null,
                 'Message-ID'       => $mid,
-                'DKIM-Signature'   => null,   // invalid after rewrite → drop
                 'X-Avuz-Forwarded' => '1',
             ]);
 
@@ -171,27 +173,33 @@ class avuz_filter_runner
     }
 
     /**
-     * Return a rewritten header block (string): drop the named headers (incl. folded
-     * continuations, case-insensitive) then append the given ones (null = drop only).
+     * Build a clean forward header block: KEEP only content/MIME headers from the
+     * original (everything needed to render the body correctly), drop all routing/auth
+     * headers, then append the given identity headers (null values skipped).
      */
-    private static function rewrite_headers(string $rawHead, array $set): string
+    private static function forward_headers(string $rawHead, array $set): string
     {
-        $drop  = array_change_key_case($set); // lowercased keys we override/remove
+        // Content headers to preserve (lowercased). Everything else is dropped.
+        $keep = [
+            'subject', 'date', 'mime-version',
+            'content-type', 'content-transfer-encoding', 'content-disposition',
+            'content-id', 'content-description', 'content-language',
+            'in-reply-to', 'references',
+        ];
         $lines = preg_split('/\r?\n/', rtrim($rawHead));
-        $out   = []; $skip = false;
+        $out   = []; $keeping = false;
         foreach ($lines as $ln) {
-            if ($ln !== '' && preg_match('/^[ \t]/', $ln)) { if (!$skip) $out[] = $ln; continue; } // folded
-            $skip = false;
-            if (preg_match('/^([^\s:]+):/', $ln, $m) && array_key_exists(strtolower($m[1]), $drop)) {
-                $skip = true; continue; // drop the original header
+            if ($ln !== '' && preg_match('/^[ \t]/', $ln)) { if ($keeping) $out[] = $ln; continue; } // folded
+            $keeping = false;
+            if (preg_match('/^([^\s:]+):/', $ln, $m) && in_array(strtolower($m[1]), $keep, true)) {
+                $keeping = true; $out[] = $ln;
             }
-            $out[] = $ln;
         }
         $head = implode("\r\n", $out);
         foreach ($set as $k => $v) {
             if ($v !== null && $v !== '') $head .= "\r\n$k: $v";
         }
-        return $head;
+        return ltrim($head, "\r\n");
     }
 }
 
