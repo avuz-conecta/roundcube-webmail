@@ -1,10 +1,33 @@
-/* Condition / action rows: compact, aligned, native records-table look */
-#af-conditions, #af-actions { width: 100%; margin: .25em 0; }
-#af-conditions td, #af-actions td { padding: .2em .3em; vertical-align: middle; }
-#af-conditions .af-field, #af-conditions .af-op,
-#af-actions .af-atype { width: auto; min-width: 7em; }
+/* ── Compact editor to match the native filter form ───────────────── */
+#avuz-filter-editor .form-group.row { margin-bottom: .4em; align-items: center; }
+#avuz-filter-editor .col-form-label { padding-top: .25em; padding-bottom: .25em; }
+
+/* Section headings ("Regras" / "Ações") — modest bold, tight, like native */
+#avuz-filter-editor .af-section {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 1em 0 .35em;
+}
+
+/* ── Condition / action rows ───────────────────────────────────────── */
+#af-conditions, #af-actions { width: 100%; margin: 0 0 .25em; }
+#af-conditions td, #af-actions td { padding: .15em .3em; vertical-align: middle; }
+#af-conditions td:first-child, #af-actions td:first-child { padding-left: 0; }
+#af-conditions .af-field, #af-conditions .af-op, #af-actions .af-atype {
+  width: auto; min-width: 7em;
+}
 #af-conditions .af-val { width: 100%; }
 #af-actions .af-afolder, #af-actions .af-fwd { width: 100%; }
-td.rowbuttons { white-space: nowrap; width: 1%; text-align: right; }
-td.rowbuttons .button { margin-left: .35em; opacity: .7; }
-td.rowbuttons .button:hover { opacity: 1; }
+
+/* Row buttons: inline, icon-only, gray (native FA icons render via ::before) */
+td.rowbuttons { width: 1%; white-space: nowrap; text-align: right; padding-left: .5em; }
+td.rowbuttons .button {
+  display: inline-block;
+  padding: .2em .3em;
+  margin-left: .1em;
+  vertical-align: middle;
+  color: #999;
+  line-height: 1;
+}
+td.rowbuttons .button:hover { color: #333; }
+td.rowbuttons .button .inner { display: none; } /* hide fallback text; show only the icon */
