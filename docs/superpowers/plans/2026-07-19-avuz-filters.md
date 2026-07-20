@@ -462,18 +462,26 @@ class avuz_filter_runner
         return $acted;
     }
 
-    /** Apply one rule's actions to a single UID via the live IMAP session. */
+    /**
+     * Apply one rule's actions to a single UID via the live IMAP session.
+     * Flags MUST be set while the message is still in INBOX; the move/delete is the
+     * terminal action (removes it from INBOX), so it runs LAST regardless of the
+     * order the actions were configured in. Prevents dropping later actions and
+     * prevents flagging a message that already left the folder.
+     */
     private static function apply($storage, string $folder, string $trash, int $uid, array $actions): void
     {
+        $move_to = null;
         foreach ($actions as $a) {
             switch ($a['type']) {
                 case 'mark_read': $storage->set_flag($uid, 'SEEN', $folder); break;
                 case 'flag':      $storage->set_flag($uid, 'FLAGGED', $folder); break;
-                case 'delete':    $storage->move_message($uid, $trash, $folder); return; // leaves INBOX
-                case 'move':
-                    if (!empty($a['folder'])) { $storage->move_message($uid, $a['folder'], $folder); return; }
-                    break;
+                case 'delete':    $move_to = $trash; break;                       // last-wins
+                case 'move':      if (!empty($a['folder'])) $move_to = $a['folder']; break;
             }
+        }
+        if ($move_to !== null) {
+            $storage->move_message($uid, $move_to, $folder); // terminal: removes from INBOX
         }
     }
 }
