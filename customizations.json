@@ -108,6 +108,18 @@
       "description": "One-char fix at rcube_washtml.php:431 — add '=' to the data-URI base64 validation class ([^0-9a-z\\s/+] -> [^0-9a-z\\s/+=]). Upstream 1.6.14 (commit fde14d01a) omitted the base64 padding char, so it stripped the src of any embedded image whose byte length isn't a multiple of 3, saving HTML signatures 100% blank. Verified: padded base64 survives, malicious non-base64 payloads still blocked.",
       "risk": "low",
       "notes": "Core file patch — re-verify on upstream upgrade; upstream may fix this line differently. Security-sensitive (the line is part of a remote-image-blocking hardening); '=' is a legit base64 char so allowing it does not weaken the check. IMPORTANT: the Dockerfile downloads the stock release tarball and overlays only listed files — a core patch has NO effect unless a matching `COPY program/lib/...` line exists in Dockerfile (added under 'Core patches'). Any future core-file patch needs its own COPY line."
+    },
+    {
+      "id": "avuz-filters-plugin",
+      "type": "plugin",
+      "paths": [
+        "plugins/avuz_filters/",
+        "config/config.inc.php",
+        "Dockerfile"
+      ],
+      "description": "Custom in-session mail-filters plugin replacing managesieve (Zoho has no ManageSieve server or filter API). Rules stored in Postgres (avuz_filters, avuz_filter_state); applied to INBOX over the user's OWN live IMAP session on login + new-mail refresh + a manual 'apply to existing' action. Actions: move/mark-read/flag/delete(to Trash); conditions from/to/cc/subject x contains/is; first-match; bounded 1000 msgs/pass. No daemon, no stored credentials. Requires Postgres.",
+      "risk": "medium",
+      "notes": "V1 is Roundcube-only (in-session) — does NOT filter for Outlook/phone-primary users. Cold-start seeds the last-uid watermark (never mass-processes existing inbox). See docs/superpowers/specs/2026-07-19-avuz-filters-design.md + plan (incl. hardening backlog). managesieve removed from plugins list."
     }
   ]
 }
