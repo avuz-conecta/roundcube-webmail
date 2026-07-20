@@ -11,6 +11,7 @@ class avuz_filters extends rcube_plugin
 
     function init()
     {
+        require_once __DIR__ . '/lib/filter_runner.php'; // pulls in rule_engine + rules_store
         $this->add_texts('localization/', true);
         $this->ensure_schema();
 
@@ -27,6 +28,27 @@ class avuz_filters extends rcube_plugin
     }
 
     private function db() { return rcmail::get_instance()->get_dbh(); }
+
+    function on_login($args)
+    {
+        avuz_filter_runner::run(rcmail::get_instance(), false);
+        return $args;
+    }
+
+    function on_new_messages($args)
+    {
+        // Fires on check-recent when the server reports new mail. Sort before render.
+        avuz_filter_runner::run(rcmail::get_instance(), false);
+        return $args;
+    }
+
+    function apply_existing()
+    {
+        $rcmail = rcmail::get_instance();
+        $n = avuz_filter_runner::run($rcmail, true);
+        $rcmail->output->show_message($rcmail->gettext(['name'=>'appliedn','vars'=>['n'=>$n]], 'avuz_filters'), 'confirmation');
+        $rcmail->output->send();
+    }
 
     /** Idempotent — CREATE TABLE IF NOT EXISTS from SQL/postgres.sql. */
     function ensure_schema()
