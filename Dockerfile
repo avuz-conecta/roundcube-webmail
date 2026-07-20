@@ -21,6 +21,7 @@ RUN curl -sL "https://github.com/roundcube/roundcubemail/releases/download/${RC_
 COPY config/config.inc.php /var/www/roundcube/config/config.inc.php
 COPY plugins/nextcloud_sso /var/www/roundcube/plugins/nextcloud_sso
 COPY plugins/avuz_prefetch /var/www/roundcube/plugins/avuz_prefetch
+COPY plugins/avuz_filters /var/www/roundcube/plugins/avuz_filters
 COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
 COPY skins/avuz /var/www/roundcube/skins/avuz
 # Core patches (overlay individual patched files from the release tarball).

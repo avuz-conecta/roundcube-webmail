@@ -89,7 +89,10 @@ $config['plugins'] = [
     'nextcloud_sso',
     'archive',
     'zipdownload',
-    'managesieve',
+    // 'managesieve' removed: Zoho offers no ManageSieve server or filter API, so
+    // the Filters UI could only ever show a connection error. Replaced by
+    // 'avuz_filters' (in-session filters applied over the user's own IMAP session).
+    'avuz_filters',
     'password',
     'avuz_prefetch',
 ];
