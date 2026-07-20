@@ -10,6 +10,38 @@
 
 **Spec:** `docs/superpowers/specs/2026-07-19-sqlite-to-postgres-migration-design.md`
 
+---
+
+## ⏸ STATUS / RESUME HERE (updated 2026-07-19)
+
+**Tasks 1–9 DONE. Staging (`avuz-mail-roundcube-2`, endpoint 3) is fully migrated to Postgres, content-verified, running clean.** Remaining: **Task 10 (prod rehearsal)** and **Task 11 (prod cutover)** on prod stack `avuz-mail-roundcube`, **endpoint 5**.
+
+**⚠ The committed scripts in `scripts/migrate/` are the SOURCE OF TRUTH.** The inline code blocks in Tasks 4–7 below were the first draft; the staging run surfaced 7 bugs, all fixed in the committed scripts (and mostly synced here). When executing prod, RUN THE COMMITTED SCRIPTS, use the task text for the *procedure/order*.
+
+**Bugs the staging rehearsal already fixed (baked into `scripts/migrate/`):**
+1. `pg-oneshot.sh` uses `Tty:false` + de-frames docker logs (a TTY made psql hang on its pager).
+2. FK drop/re-add SQL is base64'd through to psql (`DO $$` was expanded to the container shell PID otherwise).
+3. pgloader image = **`dimitri/pgloader:latest`** — the only tag that exists (no `:3.6.9`). Pin by **digest** at rehearsal: `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>`.
+4. pgloader filter clause is `INCLUDING ONLY TABLE NAMES LIKE …` (not `MATCHING`), placed AFTER `SET`.
+5. pgloader reads a **copy in `/tmp`** — the volume is mounted `:ro` and SQLite needs RW-open or fails CANTOPEN.
+6. `verify.sh` runs `sqlite3 -noheader -list` (this image's sqlite3 defaults to box mode).
+7. **`pdo_pgsql` PHP driver** must be in the image or every query fails `could not find driver`.
+
+**Prod images are BUILT + PUSHED (`:latest`, with `pdo_pgsql`) but NOT deployed:** `avuz-roundcube:latest`, `avuz-password-broker:latest`, `avuz-imapproxy-sidecar:latest`, base `avuz-roundcube-base:latest`. A prod `deploy.sh avuz-mail-roundcube` would pull them.
+
+**Remaining prod checklist (see Tasks 10–11 for exact commands):**
+- [ ] Generate a **separate** prod `ROUNDCUBE_PG_PASSWORD` (do NOT reuse staging's).
+- [ ] `PORTAINER_ENV_FILE=scripts/deploy.prod.env scripts/migrate/stack-add-postgres.sh avuz-mail-roundcube <prod-pw>` (adds in-stack postgres; leaves DSN empty).
+- [ ] Deploy prod `:latest` images so roundcube has `pdo_pgsql` (either now for the signature fix, or as part of cutover).
+- [ ] Rehearse on a copy: `cp roundcube.db rehearsal.db` in the pod → `migrate.sh 5 avuz-mail-roundcube rehearsal.db` → `verify.sh 5 avuz-mail-roundcube <container> rehearsal.db` must PASS exactly. Record the pgloader digest + time the run for the window.
+- [ ] Cutover in a window: backup db → stop roundcube → `migrate.sh 5 avuz-mail-roundcube roundcube.db` → `verify.sh …` gate → flip prod stack `ROUNDCUBE_DB_DSN` to `pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres/roundcube` → redeploy → live smoke → stamp `migration_complete` → `pg_dump`.
+
+**Env/paths:** prod = endpoint 5, stack `avuz-mail-roundcube`, container `avuz-mail-roundcube-roundcube-1`, `PORTAINER_ENV_FILE=scripts/deploy.prod.env`. Staging PG password is in `scripts/migrate/.staging-pg-password` (gitignored). Prod stack has an `imapproxy` service — the merge script preserves it.
+
+**Unrelated OPEN decision (not part of this migration):** managesieve/Filters error — Zoho has no ManageSieve server, so Filters can't work; disable vs leave. Still enabled in the images just built. To be discussed.
+
+---
+
 ## Global Constraints
 
 - Migrate ONLY these 7 tables: `users, identities, contacts, contactgroups, contactgroupmembers, collected_addresses, responses`. Never migrate `cache*`, `session`, `filestore`, `dictionary`, `searches`.
@@ -21,7 +53,7 @@
 - Row parity baselines — staging: users 4, identities 4, collected_addresses 17, contacts 0, contactgroups 0, contactgroupmembers 0, responses 0. Prod: users 93, identities 94, contacts 11555, contactgroups 2, contactgroupmembers 6, collected_addresses 333, responses 4.
 - Container/DB paths: SQLite at `/var/www/roundcube/temp/roundcube.db`; Roundcube schema at `/var/www/roundcube/SQL/postgres.initial.sql`; roundcube service name `roundcube`, postgres service name `postgres`, redis `redis`.
 - **PREREQUISITE — PHP `pdo_pgsql` driver:** the roundcube image must be built with `pdo_pgsql` (added to `Dockerfile.base`), or every Postgres query fails `DB Error: could not find driver`. Rebuild base + app + redeploy BEFORE flipping any stack's DSN to Postgres. (The image shipped SQLite-only: `pdo pdo_mysql pdo_sqlite`.)
-- **pgloader is PINNED** to `dimitri/pgloader:3.6.9` (never `:latest`). During rehearsal, record the resolved image digest and set `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>` for the prod cutover so rehearsal and cutover run the provably identical build.
+- **pgloader image = `dimitri/pgloader:latest`** — it publishes NO version tags (`:3.6.9` does not exist; `:latest` resolves to `3.6.7~devel`). Reproducibility = pin the DIGEST: during rehearsal record the resolved digest and set `PGLOADER_IMAGE=dimitri/pgloader@sha256:<digest>` for the prod cutover so rehearsal and cutover run the provably identical build.
 
 ---
 
