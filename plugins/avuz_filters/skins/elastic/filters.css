@@ -1,14 +1,17 @@
-#avuz-filters .notice {
-  margin: .5em 0;
-  padding: .5em .75em;
-  background: rgba(43, 181, 227, 0.10);
-  border-left: 3px solid #2bb5e3;
-  border-radius: 3px;
-  font-size: .9em;
+/* Condition / action rows: align the selects + input inline like Roundcube forms */
+.af-cond-row, .af-action-row {
+  display: flex;
+  gap: .5em;
+  align-items: center;
+  margin: .35em 0;
 }
-#avuz-filters-list td { padding: .4em .75em; cursor: pointer; }
-.avuz-filter-row:hover { background: rgba(0, 0, 0, 0.04); }
-.af-cond-row, .af-action-row { display: flex; gap: .5em; align-items: center; margin: .35em 0; }
-.af-cond-row .af-val { flex: 1; }
-#avuz-filter-editor fieldset { margin: .75em 0; padding: .5em .75em; border: 1px solid rgba(0,0,0,.12); border-radius: 4px; }
-#avuz-filter-editor legend { font-weight: 600; padding: 0 .4em; }
+.af-cond-row .af-val { flex: 1 1 auto; }
+.af-cond-row select, .af-action-row select { flex: 0 0 auto; width: auto; }
+.af-action-row .af-afolder { flex: 1 1 auto; }
+.af-cond-row .icon.delete, .af-action-row .icon.delete {
+  flex: 0 0 auto;
+  text-decoration: none;
+  opacity: .6;
+}
+.af-cond-row .icon.delete:hover, .af-action-row .icon.delete:hover { opacity: 1; }
+#avuz-filter-editor .create { margin-top: .35em; display: inline-block; }

@@ -27,4 +27,3 @@ $labels['appliedn']      = 'Filtros aplicados a $n mensagem(ns).';
 $labels['nofilters']     = 'Nenhum filtro ainda.';
 $labels['needcondaction']= 'Um filtro precisa de pelo menos uma condição e uma ação.';
 $labels['deleteconfirm'] = 'Excluir este filtro?';
-$labels['zohonote']      = 'Gerencie os filtros aqui OU no webmail da Zoho — não em ambos — para evitar filtragem duplicada.';

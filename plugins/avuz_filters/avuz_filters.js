@@ -1,8 +1,22 @@
-/* avuz_filters — settings UI (in-session filters for Zoho) */
-/* global rcmail, rcube_webmail, $ */
+/* avuz_filters — settings UI (native Roundcube list + editor) */
+/* global rcmail, rcube_webmail, rcube_list_widget, $ */
 
 window.rcmail && rcmail.addEventListener('init', function () {
-    rcmail.register_command('plugin.avuz_filters.add', function () { avuz_edit(null); }, true);
+    // Native filters list (like managesieve).
+    if (rcmail.gui_objects.filterslist) {
+        rcmail.filters_list = new rcube_list_widget(rcmail.gui_objects.filterslist,
+            { multiselect: false, draggable: false, keyboard: true });
+        rcmail.filters_list.addEventListener('select', function (list) {
+            var id = list.get_single_selection();
+            if (id !== null) avuz_edit(avuz_find(id));
+        }).init();
+    }
+
+    rcmail.register_command('plugin.avuz_filters.add', function () {
+        rcmail.filters_list && rcmail.filters_list.clear_selection();
+        avuz_edit(null);
+    }, true);
+
     rcmail.register_command('plugin.avuz_filters.apply_existing', function () {
         rcmail.http_post('plugin.avuz_filters.apply_existing', {}, rcmail.set_busy(true, 'loading'));
     }, true);
@@ -13,70 +27,58 @@ window.rcmail && rcmail.addEventListener('init', function () {
     $('#af-add-cond').on('click', function (e) { e.preventDefault(); avuz_add_cond(); });
     $('#af-add-action').on('click', function (e) { e.preventDefault(); avuz_add_action(); });
     $('#af-save').on('click', avuz_save).val(rcmail.get_label('save'));
-    $('#af-cancel').on('click', function () { avuz_close(); }).val(rcmail.get_label('cancel'));
     $('#af-delete').on('click', avuz_delete).val(rcmail.get_label('delete'));
-
-    avuz_render_list();
 });
 
-function avuz_render_list() {
+function avuz_find(id) {
     var rules = rcmail.env.avuz_filters || [];
-    var body = $('#avuz-filters-list-body').empty();
-    if (!rules.length) {
-        body.append($('<tr>').append($('<td>').text(rcmail.get_label('avuz_filters.nofilters') || '—')));
-        return;
-    }
-    $.each(rules, function (i, r) {
-        var tr = $('<tr>').addClass('avuz-filter-row').data('rule', r);
-        tr.append($('<td>').text(r.name));
-        tr.append($('<td>').text(r.enabled == 1 ? '✓' : '✕'));
-        tr.on('click', function () { avuz_edit($(this).data('rule')); });
-        body.append(tr);
-    });
+    for (var i = 0; i < rules.length; i++) if (rules[i].filter_id == id) return rules[i];
+    return null;
 }
 
 function avuz_field_select(val) {
-    var s = $('<select class="af-field">');
+    var s = $('<select class="af-field form-control custom-select">');
     ['from', 'to', 'cc', 'subject'].forEach(function (f) {
         s.append($('<option>').val(f).text(rcmail.get_label('avuz_filters.field_' + f)));
     });
     return s.val(val || 'from');
 }
 function avuz_op_select(val) {
-    var s = $('<select class="af-op">');
+    var s = $('<select class="af-op form-control custom-select">');
     ['contains', 'is'].forEach(function (o) {
         s.append($('<option>').val(o).text(rcmail.get_label('avuz_filters.op_' + o)));
     });
     return s.val(val || 'contains');
 }
+/* Clone the server-rendered folder_selector (proper folder NAMES). */
 function avuz_folder_select(val) {
-    var s = $('<select class="af-folder">');
-    (rcmail.env.avuz_folders || []).forEach(function (f) { s.append($('<option>').val(f).text(f)); });
-    return s.val(val || '');
+    var s = $(rcmail.env.avuz_folder_select).removeAttr('name').addClass('af-afolder form-control custom-select');
+    if (val) s.val(val);
+    return s;
 }
 
 function avuz_add_cond(c) {
     c = c || {};
-    var row = $('<div class="af-cond-row">');
+    var row = $('<div class="af-cond-row form-group row">');
     row.append(avuz_field_select(c.field), avuz_op_select(c.op),
-        $('<input class="af-val" type="text">').val(c.value || ''),
-        $('<a href="#">✕</a>').on('click', function (e) { e.preventDefault(); row.remove(); }));
+        $('<input class="af-val form-control" type="text">').val(c.value || ''),
+        $('<a href="#" class="icon delete" title="' + rcmail.get_label('delete') + '">✕</a>')
+            .on('click', function (e) { e.preventDefault(); row.remove(); }));
     $('#af-conditions').append(row);
 }
 
 function avuz_add_action(a) {
     a = a || {};
-    var row = $('<div class="af-action-row">');
-    var typ = $('<select class="af-atype">');
-    ['move', 'mark_read', 'flag', 'delete'].forEach(function (t) {
-        typ.append($('<option>').val(t).text(rcmail.get_label('avuz_filters.' +
-            (t == 'move' ? 'movetofolder' : t == 'mark_read' ? 'markread' : t == 'flag' ? 'flagmsg' : 'deletemsg'))));
-    });
+    var row = $('<div class="af-action-row form-group row">');
+    var typ = $('<select class="af-atype form-control custom-select">');
+    [['move', 'movetofolder'], ['mark_read', 'markread'], ['flag', 'flagmsg'], ['delete', 'deletemsg']]
+        .forEach(function (p) { typ.append($('<option>').val(p[0]).text(rcmail.get_label('avuz_filters.' + p[1]))); });
     typ.val(a.type || 'move');
-    var fld = avuz_folder_select(a.folder).addClass('af-afolder');
-    var toggle = function () { fld.toggle(typ.val() == 'move'); };
+    var fld = avuz_folder_select(a.folder);
+    var toggle = function () { fld.toggle(typ.val() === 'move'); };
     typ.on('change', toggle);
-    row.append(typ, fld, $('<a href="#">✕</a>').on('click', function (e) { e.preventDefault(); row.remove(); }));
+    row.append(typ, fld, $('<a href="#" class="icon delete" title="' + rcmail.get_label('delete') + '">✕</a>')
+        .on('click', function (e) { e.preventDefault(); row.remove(); }));
     $('#af-actions').append(row);
     toggle();
 }
@@ -92,9 +94,9 @@ function avuz_edit(rule) {
     (rule.actions && rule.actions.length ? rule.actions : [{}]).forEach(avuz_add_action);
     $('#avuz-filter-editor').data('filter_id', rule.filter_id || 0).show();
     $('#af-delete').toggle(!!rule.filter_id);
+    // Elastic: reveal the content pane on mobile.
+    if (window.UI && UI.show_content) UI.show_content(true);
 }
-
-function avuz_close() { $('#avuz-filter-editor').hide(); }
 
 function avuz_collect() {
     var conds = [];
@@ -105,7 +107,7 @@ function avuz_collect() {
     var actions = [];
     $('#af-actions .af-action-row').each(function () {
         var t = $('.af-atype', this).val();
-        actions.push(t == 'move' ? { type: 'move', folder: $('.af-afolder', this).val() } : { type: t });
+        actions.push(t === 'move' ? { type: 'move', folder: $('.af-afolder', this).val() } : { type: t });
     });
     return {
         filter_id: $('#avuz-filter-editor').data('filter_id') || 0,

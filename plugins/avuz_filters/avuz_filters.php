@@ -67,19 +67,36 @@ class avuz_filters extends rcube_plugin
         $rcmail = rcmail::get_instance();
         $this->include_script('avuz_filters.js');
         $this->include_stylesheet($this->local_skin_path() . '/filters.css');
+
         $store = new avuz_rules_store($rcmail->get_dbh());
+        // Rule data for the editor (client builds the form from this).
         $rcmail->output->set_env('avuz_filters', $store->list_rules((int) $rcmail->user->ID));
-        $rcmail->output->set_env('avuz_folders', array_keys($rcmail->get_storage()->list_folders_subscribed()));
-        $rcmail->output->add_handler('avuzfilterslist', [$this, 'html_list']);
+
+        // Native folder <select> prototype (proper localized folder NAMES, not ids).
+        $sel = rcmail_action::folder_selector(['name' => '_af_folder', 'class' => 'af-afolder', 'maxlength' => 100]);
+        $rcmail->output->set_env('avuz_folder_select', $sel->show());
+
+        $rcmail->output->add_handler('avuzfilterslist', [$this, 'filters_list']);
+        $rcmail->output->add_label('avuz_filters.deleteconfirm', 'avuz_filters.needcondaction', 'avuz_filters.nofilters');
         $rcmail->output->set_pagetitle($this->gettext('filters'));
         $rcmail->output->send('avuz_filters.filters');
     }
 
-    /** Server-rendered rule list container (JS fills rows from env). */
-    function html_list($attrib)
+    /** Native Roundcube list of filters (rcube_list_widget on the client). */
+    function filters_list($attrib)
     {
-        if (empty($attrib['id'])) $attrib['id'] = 'avuz-filters-list';
-        return html::tag('table', $attrib, html::tag('tbody', ['id' => $attrib['id'] . '-body'], ''));
+        $rcmail = rcmail::get_instance();
+        if (empty($attrib['id'])) $attrib['id'] = 'avuz-filterslist';
+        $store = new avuz_rules_store($rcmail->get_dbh());
+        $rows  = [];
+        foreach ($store->list_rules((int) $rcmail->user->ID) as $r) {
+            $rows[] = ['id' => $r['filter_id'], 'name' => $r['name'],
+                       'class' => $r['enabled'] ? '' : 'disabled'];
+        }
+        $out = rcmail_action::table_output($attrib, $rows, ['name'], 'id');
+        $rcmail->output->add_gui_object('filterslist', $attrib['id']);
+        $rcmail->output->include_script('list.js');
+        return $out;
     }
 
     function ui_save()
