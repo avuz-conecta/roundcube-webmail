@@ -120,33 +120,92 @@ class avuz_filter_runner
     }
 
     /**
-     * Redirect (resend) the original message untouched to $to (Sieve 'redirect'
-     * semantics — recipient sees the original sender). Uses Roundcube's native
-     * resend/bounce machinery + the user's in-session SMTP. Stamps X-Avuz-Forwarded
-     * so a copy that lands back can't be redirected again.
+     * Forward the message to $to, sent FROM the user's own address. A true Sieve
+     * 'redirect' (preserving the original sender) is impossible on Zoho — it refuses
+     * to relay mail whose sender is a foreign address (SMTP 553). So we rewrite the
+     * top-level identity headers (From = authenticated user, Reply-To = original
+     * sender so replies still reach them) while keeping the original body +
+     * attachments byte-for-byte, then send via the user's in-session SMTP. Stamps
+     * X-Avuz-Forwarded as a loop guard.
      */
     private static function redirect(rcmail $rcmail, string $folder, int $uid, string $to): void
     {
         try {
-            $message = new rcube_message((string) $uid, $folder);
-            if (empty($message->headers)) return;
-            $from = $rcmail->get_user_email();
-            $bounce_headers = [
-                'Resent-From'      => $from,
-                'Resent-To'        => $to,
-                'Resent-Date'      => date('r'),
-                'Resent-Message-ID'=> $rcmail->gen_message_id($from),
+            $storage = $rcmail->get_storage();
+            $rawHead = $storage->get_raw_headers($uid);
+            $rawBody = $storage->get_raw_body($uid);
+            if (!$rawHead || $rawBody === false || $rawBody === null) return;
+
+            $msg      = new rcube_message((string) $uid, $folder);
+            $origFrom = trim((string) ($msg->headers->from ?? ''));
+            $user     = $rcmail->get_user_email();
+            $mid      = $rcmail->gen_message_id($user);
+
+            $head = self::rewrite_headers($rawHead, [
+                'Return-Path'      => null,   // drop
+                'Sender'           => $user,
+                'From'             => $user,  // Zoho only relays mail from the authed user
+                'Reply-To'         => $origFrom ?: null,
+                'Message-ID'       => $mid,
+                'DKIM-Signature'   => null,   // invalid after rewrite → drop
                 'X-Avuz-Forwarded' => '1',
-            ];
-            $BOUNCE = new rcmail_resend_mail([
-                'bounce_message' => $message,
-                'bounce_headers' => $bounce_headers,
             ]);
+
+            $mail  = new avuz_forward_mail($head, $rawBody, ['To' => $to, 'From' => $user, 'Message-ID' => $mid]);
             $error = null;
-            $rcmail->deliver_message($BOUNCE, $from, $to, $error);
-            if ($error) rcube::write_log('errors', "avuz_filters redirect uid=$uid to=$to error=" . json_encode($error));
+            $rcmail->deliver_message($mail, $user, $to, $error);
+            if ($error) rcube::write_log('errors', "avuz_filters forward uid=$uid to=$to err=" . json_encode($error));
         } catch (\Throwable $e) {
-            rcube::write_log('errors', 'avuz_filters redirect: ' . $e->getMessage());
+            rcube::write_log('errors', 'avuz_filters forward: ' . $e->getMessage());
         }
     }
+
+    /**
+     * Return a rewritten header block (string): drop the named headers (incl. folded
+     * continuations, case-insensitive) then append the given ones (null = drop only).
+     */
+    private static function rewrite_headers(string $rawHead, array $set): string
+    {
+        $drop  = array_change_key_case($set); // lowercased keys we override/remove
+        $lines = preg_split('/\r?\n/', rtrim($rawHead));
+        $out   = []; $skip = false;
+        foreach ($lines as $ln) {
+            if ($ln !== '' && preg_match('/^[ \t]/', $ln)) { if (!$skip) $out[] = $ln; continue; } // folded
+            $skip = false;
+            if (preg_match('/^([^\s:]+):/', $ln, $m) && array_key_exists(strtolower($m[1]), $drop)) {
+                $skip = true; continue; // drop the original header
+            }
+            $out[] = $ln;
+        }
+        $head = implode("\r\n", $out);
+        foreach ($set as $k => $v) {
+            if ($v !== null && $v !== '') $head .= "\r\n$k: $v";
+        }
+        return $head;
+    }
+}
+
+/**
+ * Minimal message object that rcube::deliver_message() can send: it only needs
+ * headers() (for recipients + logging), txtHeaders() (the header block), get()
+ * (the body) and getParam(). Lets us send a raw, header-rewritten message via
+ * Roundcube's SMTP without rebuilding it as a Mail_mime (preserves attachments).
+ */
+class avuz_forward_mail
+{
+    private $head;
+    private $body;
+    private $hdrs;
+
+    function __construct(string $head, string $body, array $hdrs)
+    {
+        $this->head = $head;
+        $this->body = $body;
+        $this->hdrs = $hdrs;
+    }
+
+    function headers($add = [], $overwrite = false, $skip_content = false) { return $this->hdrs; }
+    function txtHeaders($add = [], $overwrite = false, $skip_content = false) { return $this->head; }
+    function getParam($name) { return false; }
+    function get($params = null) { return $this->body; }
 }
