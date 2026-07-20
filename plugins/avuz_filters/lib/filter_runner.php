@@ -41,7 +41,6 @@ class avuz_filter_runner
         if (!$from_scratch && (!$state['exists'] || $uidv_reset)) {
             $seed = $uidnext ? $uidnext - 1 : 0;   // next new mail has UID >= UIDNEXT > seed
             $store->set_state($user, $folder, $seed, $uidv);
-            rcube::write_log('avuz_filters', "seed user=$user uidnext=" . ($uidnext ?? 'null') . " seed=$seed rules=" . count($rules));
             return 0;
         }
         $last = $from_scratch ? 0 : $state['last_uid'];
@@ -50,7 +49,6 @@ class avuz_filter_runner
         $criteria = $from_scratch ? 'ALL' : ('UID ' . ($last + 1) . ':*');
         $index    = $storage->search_once($folder, $criteria);
         $uids     = $index ? $index->get() : [];
-        rcube::write_log('avuz_filters', "run user=$user scratch=" . (int)$from_scratch . " last=$last uidnext=" . ($uidnext ?? 'null') . " crit='$criteria' found=" . count($uids) . " rules=" . count($rules));
         if (!$uids) { $store->set_state($user, $folder, $last, $uidv); return 0; }
 
         sort($uids, SORT_NUMERIC);
@@ -81,12 +79,6 @@ class avuz_filter_runner
             }
         }
         $store->set_state($user, $folder, $maxUid, $uidv);
-        $sample = '';
-        if (!empty($uids)) {
-            $sh = $headersList[$uids[0]] ?? null;
-            if ($sh) $sample = " sample_uid={$uids[0]} from='" . substr((string)$sh->from,0,60) . "' subj='" . substr((string)$sh->subject,0,40) . "'";
-        }
-        rcube::write_log('avuz_filters', "done user=$user acted=$acted maxUid=$maxUid" . $sample);
         return $acted;
     }
 
