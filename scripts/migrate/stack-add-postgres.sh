@@ -75,7 +75,10 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
   echo "(no changes pushed; unset DRY_RUN to apply)"; exit 0
 fi
 
-BODY="$(jq -n --arg f "$FILE" --argjson e "$ENV" '{stackFileContent:$f, env:$e, prune:false, pullImage:true}')"
+# NO_PULL=1 keeps the current running images (don't pull :latest). Use during the
+# rehearsal so adding Postgres does NOT prematurely deploy a new roundcube image.
+PULL="true"; [ "${NO_PULL:-0}" = "1" ] && PULL="false"
+BODY="$(jq -n --arg f "$FILE" --argjson e "$ENV" --argjson pull "$PULL" '{stackFileContent:$f, env:$e, prune:false, pullImage:$pull}')"
 api -X PUT -H 'Content-Type: application/json' -d "$BODY" \
   "$PORTAINER_URL/api/stacks/$SID?endpointId=$EID" >/dev/null
 echo "stack '$NAME' (id $SID) updated: postgres service + roundcube_pg volume + ROUNDCUBE_PG_PASSWORD env"
