@@ -23,8 +23,18 @@ PORTAINER_URL="${PORTAINER_URL%/}"
 OPTS=(-fsS); [ "${PORTAINER_INSECURE:-0}" = "1" ] && OPTS+=(-k)
 api(){ curl "${OPTS[@]}" -H "X-API-Key: $PORTAINER_TOKEN" "$@"; }
 
-ROW="$(api "$PORTAINER_URL/api/stacks" | jq -c --arg n "$NAME" '.[]|select(.Name==$n)')"
-[ -n "$ROW" ] || die "stack '$NAME' not found"
+# A stack name can exist on multiple endpoints (e.g. avuz-mail-roundcube on 5 and 9).
+# Disambiguate with ENDPOINT=<id> when that happens.
+ROWS="$(api "$PORTAINER_URL/api/stacks" | jq -c --arg n "$NAME" '[.[]|select(.Name==$n)]')"
+CNT="$(jq 'length' <<<"$ROWS")"
+if [ "$CNT" = "0" ]; then die "stack '$NAME' not found"; fi
+if [ "$CNT" -gt 1 ]; then
+  [ -n "${ENDPOINT:-}" ] || die "stack '$NAME' exists on multiple endpoints ($(jq -r '[.[].EndpointId]|join(",")' <<<"$ROWS")); set ENDPOINT=<id>"
+  ROW="$(jq -c --argjson e "$ENDPOINT" '.[]|select(.EndpointId==$e)' <<<"$ROWS")"
+  [ -n "$ROW" ] || die "stack '$NAME' not on endpoint $ENDPOINT"
+else
+  ROW="$(jq -c '.[0]' <<<"$ROWS")"
+fi
 SID="$(jq -r '.Id' <<<"$ROW")"; EID="$(jq -r '.EndpointId' <<<"$ROW")"
 FILE="$(api "$PORTAINER_URL/api/stacks/$SID/file" | jq -r '.StackFileContent')"
 ENV="$(jq -c '.Env // []' <<<"$ROW")"
