@@ -15,9 +15,13 @@ class avuz_filters extends rcube_plugin
         $this->add_texts('localization/', true);
         $this->ensure_schema();
 
-        // Triggers (in-session): first sort on login, then on new-mail refresh.
+        // Triggers (in-session): first sort on login, then on every mail refresh.
+        // 'refresh' fires on the periodic + manual refresh reliably; 'new_messages'
+        // only fires when check_recent detects a status diff (not always), so we use
+        // 'refresh' as the primary trigger and keep 'new_messages' as a bonus.
         $this->add_hook('login_after', [$this, 'on_login']);
         $this->add_hook('new_messages', [$this, 'on_new_messages']);
+        $this->add_hook('refresh', [$this, 'on_new_messages']);
 
         // Settings UI + manual "apply to existing" action.
         $this->add_hook('settings_actions', [$this, 'settings_menu']);
