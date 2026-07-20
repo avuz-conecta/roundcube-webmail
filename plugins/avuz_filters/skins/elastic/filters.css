@@ -2,32 +2,28 @@
 #avuz-filter-editor .form-group.row { margin-bottom: .4em; align-items: center; }
 #avuz-filter-editor .col-form-label { padding-top: .25em; padding-bottom: .25em; }
 
-/* Section headings ("Regras" / "Ações") — modest bold, tight, like native */
-#avuz-filter-editor .af-section {
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin: 1em 0 .35em;
-}
+/* Section headings ("Regras" / "Ações") — modest bold, tight */
+#avuz-filter-editor .af-section { font-size: 1.05rem; font-weight: 700; margin: 1em 0 .35em; }
 
-/* ── Condition / action rows ───────────────────────────────────────── */
-#af-conditions, #af-actions { width: 100%; margin: 0 0 .25em; }
-#af-conditions td, #af-actions td { padding: .15em .3em; vertical-align: middle; }
-#af-conditions td:first-child, #af-actions td:first-child { padding-left: 0; }
-#af-conditions .af-field, #af-conditions .af-op, #af-actions .af-atype {
-  width: auto; min-width: 7em;
-}
-#af-conditions .af-val { width: 100%; }
-#af-actions .af-afolder, #af-actions .af-fwd { width: 100%; }
+/* ── Condition / action rows as flexbox ────────────────────────────── */
+/* (a width:100% <table> auto-distributes leftover width into cells, which
+   created big gaps; flex packs the selects tight and lets only the value grow) */
+#af-conditions, #af-actions,
+#af-conditions tbody, #af-actions tbody { display: block; width: 100%; margin: 0; }
+.af-cond-row, .af-action-row { display: flex; align-items: center; gap: .5em; margin: .3em 0; }
+.af-cond-row > td, .af-action-row > td { display: block; padding: 0; }
 
-/* Row buttons: inline, icon-only, gray (native FA icons render via ::before) */
-td.rowbuttons { width: 1%; white-space: nowrap; text-align: right; padding-left: .5em; }
+.af-cond-row .af-field, .af-cond-row .af-op, .af-action-row .af-atype {
+  flex: 0 0 auto; width: auto; min-width: 8em;
+}
+.af-grow { flex: 1 1 auto; min-width: 0; }        /* value / folder / email cell fills */
+.af-grow .form-control { width: 100%; }
+
+/* Row buttons: inline, icon-only, gray */
+td.rowbuttons { flex: 0 0 auto; white-space: nowrap; }
 td.rowbuttons .button {
-  display: inline-block;
-  padding: .2em .3em;
-  margin-left: .1em;
-  vertical-align: middle;
-  color: #999;
-  line-height: 1;
+  display: inline-block; padding: .2em .3em; margin-left: .1em;
+  vertical-align: middle; color: #999; line-height: 1;
 }
 td.rowbuttons .button:hover { color: #333; }
-td.rowbuttons .button .inner { display: none; } /* hide fallback text; show only the icon */
+td.rowbuttons .button .inner { display: none; }   /* show only the FA icon */

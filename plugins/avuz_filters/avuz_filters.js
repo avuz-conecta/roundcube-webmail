@@ -70,7 +70,7 @@ function avuz_add_cond(c) {
     var tr = $('<tr class="af-cond-row">');
     tr.append($('<td>').append(avuz_field_select(c.field)),
               $('<td>').append(avuz_op_select(c.op)),
-              $('<td>').append($('<input class="af-val form-control" type="text">').val(c.value || '')),
+              $('<td class="af-grow">').append($('<input class="af-val form-control" type="text">').val(c.value || '')),
               avuz_rowbuttons(function () { avuz_add_cond(); },
                               function () { if ($('#af-conditions tr').length > 1) tr.remove(); }));
     $('#af-conditions tbody').append(tr);
@@ -89,7 +89,7 @@ function avuz_add_action(a) {
     var toggle = function () { var t = typ.val(); fld.toggle(t === 'move'); fwd.toggle(t === 'forward'); };
     typ.on('change', toggle);
     tr.append($('<td>').append(typ),
-              $('<td>').append(fld, fwd),
+              $('<td class="af-grow">').append(fld, fwd),
               avuz_rowbuttons(function () { avuz_add_action(); },
                               function () { if ($('#af-actions tr').length > 1) tr.remove(); }));
     $('#af-actions tbody').append(tr);
