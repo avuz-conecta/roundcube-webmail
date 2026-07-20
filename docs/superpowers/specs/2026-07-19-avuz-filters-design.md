@@ -17,9 +17,11 @@ The design was pushed hard on two axes and landed here deliberately:
 1. **No credential vault.** A background daemon would need to store every user's mailbox password (decryptable, always-on, network-reachable) — a severe security downgrade (compromise = full IMAP access to all mailboxes). **Rejected.** Filters run **in-session**, using the user's *own* live IMAP connection — **no passwords are ever stored.**
 2. **In-session, Roundcube-only, accepted for V1.** Only Zoho's own server-side filters are truly universal (delivery-time, all clients). Anything we build is post-delivery and Roundcube-scoped. In-session filtering **only runs while the user is active in Roundcube** — so users who live in Outlook/phone are NOT filtered in V1. Client's mix is ~80% Roundcube-primary / ~20% Outlook; V1 ships for the majority, non-Roundcube coverage is a future iteration.
 
+### Added after initial design (client requirement)
+- **Redirect action** ("Redirecionar mensagem para <address>"): resend the original message untouched to another address (Sieve `redirect` semantics — recipient sees the original sender). Sends via Roundcube's native resend/bounce machinery using the user's in-session SMTP (no stored creds). **Loop guard:** stamps `X-Avuz-Forwarded` and skips any message already carrying it. Not terminal — coexists with move/mark. Caveat: for external senders, redirect can fail SPF/DMARC at the target (deliverability risk); fine for internal same-domain. A "forward as new message" mode may be added later if SPF issues surface.
+
 ### Non-goals (V1)
 - No background daemon, no stored credentials, no offline/other-client filtering.
-- No forwarding/redirect (needs SMTP + loop protection).
 - No outgoing filters, vacation/auto-reply, regex conditions.
 - Not a replacement for Zoho's delivery-time filtering (users should pick one, not both — see Conflicts).
 
