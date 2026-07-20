@@ -50,8 +50,12 @@ CONTAINER="$1"; shift
 CMD_JSON="$(for a in "$@"; do jq -Rn --arg x "$a" '$x'; done | jq -sc .)"
 
 # Find which environment (endpoint) holds the container, and its id.
+# PORTAINER_ENDPOINT pins the search to one endpoint — REQUIRED when the same
+# container name exists on multiple endpoints (e.g. prod endpoints 5 and 9), or
+# you may exec against the wrong host's mailbox.
 ENDPOINT=""; CID=""
-for eid in $(api "$PORTAINER_URL/api/endpoints" | jq -r '.[].Id'); do
+ENDPOINT_IDS="${PORTAINER_ENDPOINT:-$(api "$PORTAINER_URL/api/endpoints" | jq -r '.[].Id')}"
+for eid in $ENDPOINT_IDS; do
   cid="$(api "$PORTAINER_URL/api/endpoints/$eid/docker/containers/json?all=1" \
     | jq -r --arg n "$CONTAINER" '.[] | select(.Names[] | ltrimstr("/") == $n) | .Id' | head -1)"
   if [ -n "$cid" ]; then ENDPOINT="$eid"; CID="$cid"; break; fi
