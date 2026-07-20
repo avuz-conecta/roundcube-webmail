@@ -26,9 +26,12 @@
 			<roundcube:button command="plugin.avuz_filters.add" type="link"
 				label="create" title="avuz_filters.addfilter" innerClass="inner"
 				class="create disabled" classAct="create" data-fab="true" />
+			<roundcube:button command="plugin.avuz_filters.del" type="link"
+				label="delete" title="delete" innerClass="inner"
+				class="delete disabled" classAct="delete" />
 			<roundcube:button command="plugin.avuz_filters.apply_existing" type="link"
 				label="avuz_filters.applyexisting" title="avuz_filters.applyexisting" innerClass="inner"
-				class="button" />
+				class="button reload" />
 		</div>
 	</div>
 
@@ -40,33 +43,26 @@
 				<div class="col-sm-8"><input type="text" id="af-name" class="form-control" /></div>
 			</div>
 			<div class="form-group row">
+				<label class="col-form-label col-sm-4" for="af-enabled"><roundcube:label name="avuz_filters.enabled" /></label>
+				<div class="col-sm-8"><input type="checkbox" id="af-enabled" value="1" checked="checked" /></div>
+			</div>
+			<div class="form-group row">
 				<label class="col-form-label col-sm-4" for="af-match"><roundcube:label name="avuz_filters.scope" /></label>
 				<div class="col-sm-8"><select id="af-match" class="form-control custom-select">
 					<option value="all"><roundcube:label name="avuz_filters.matchall" /></option>
 					<option value="any"><roundcube:label name="avuz_filters.matchany" /></option>
 				</select></div>
 			</div>
-			<div class="form-group row">
-				<label class="col-form-label col-sm-4" for="af-enabled"><roundcube:label name="avuz_filters.enabled" /></label>
-				<div class="col-sm-8"><input type="checkbox" id="af-enabled" checked="checked" /></div>
-			</div>
 		</fieldset>
 
-		<fieldset class="propform">
-			<legend><roundcube:label name="avuz_filters.rules" /></legend>
-			<div id="af-conditions"></div>
-			<a href="#" id="af-add-cond" class="btn btn-secondary create">+ <roundcube:label name="avuz_filters.addcondition" /></a>
-		</fieldset>
+		<h3 class="propform-title"><roundcube:label name="avuz_filters.rules" /></h3>
+		<table class="propform records-table" id="af-conditions"><tbody></tbody></table>
 
-		<fieldset class="propform">
-			<legend><roundcube:label name="avuz_filters.actions" /></legend>
-			<div id="af-actions"></div>
-			<a href="#" id="af-add-action" class="btn btn-secondary create">+ <roundcube:label name="avuz_filters.addaction" /></a>
-		</fieldset>
+		<h3 class="propform-title"><roundcube:label name="avuz_filters.actions" /></h3>
+		<table class="propform records-table" id="af-actions"><tbody></tbody></table>
 
 		<div class="formbuttons">
 			<input type="button" id="af-save" class="btn btn-primary submit" />
-			<input type="button" id="af-delete" class="btn btn-danger delete" />
 		</div>
 	</div>
 </div>

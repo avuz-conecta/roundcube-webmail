@@ -2,20 +2,22 @@
 /* global rcmail, rcube_webmail, rcube_list_widget, $ */
 
 window.rcmail && rcmail.addEventListener('init', function () {
-    // Native filters list (like managesieve).
     if (rcmail.gui_objects.filterslist) {
         rcmail.filters_list = new rcube_list_widget(rcmail.gui_objects.filterslist,
             { multiselect: false, draggable: false, keyboard: true });
         rcmail.filters_list.addEventListener('select', function (list) {
             var id = list.get_single_selection();
-            if (id !== null) avuz_edit(avuz_find(id));
+            if (id !== null) { avuz_edit(avuz_find(id)); rcmail.enable_command('plugin.avuz_filters.del', true); }
         }).init();
     }
 
     rcmail.register_command('plugin.avuz_filters.add', function () {
         rcmail.filters_list && rcmail.filters_list.clear_selection();
+        rcmail.enable_command('plugin.avuz_filters.del', false);
         avuz_edit(null);
     }, true);
+
+    rcmail.register_command('plugin.avuz_filters.del', avuz_delete, false);
 
     rcmail.register_command('plugin.avuz_filters.apply_existing', function () {
         rcmail.http_post('plugin.avuz_filters.apply_existing', {}, rcmail.set_busy(true, 'loading'));
@@ -24,10 +26,7 @@ window.rcmail && rcmail.addEventListener('init', function () {
     rcmail.addEventListener('plugin.avuz_filters_saved', function () { rcmail.goto_url('plugin.avuz_filters'); });
     rcmail.addEventListener('plugin.avuz_filters_deleted', function () { rcmail.goto_url('plugin.avuz_filters'); });
 
-    $('#af-add-cond').on('click', function (e) { e.preventDefault(); avuz_add_cond(); });
-    $('#af-add-action').on('click', function (e) { e.preventDefault(); avuz_add_action(); });
     $('#af-save').on('click', avuz_save).val(rcmail.get_label('save'));
-    $('#af-delete').on('click', avuz_delete).val(rcmail.get_label('delete'));
 });
 
 function avuz_find(id) {
@@ -50,26 +49,36 @@ function avuz_op_select(val) {
     });
     return s.val(val || 'contains');
 }
-/* Clone the server-rendered folder_selector (proper folder NAMES). */
 function avuz_folder_select(val) {
     var s = $(rcmail.env.avuz_folder_select).removeAttr('name').addClass('af-afolder form-control custom-select');
     if (val) s.val(val);
     return s;
 }
 
+/* Native row buttons: add (+) and delete (trash) icon links, like managesieve. */
+function avuz_rowbuttons(addFn, delFn) {
+    var td = $('<td class="rowbuttons">');
+    $('<a href="#" class="button create add" title="' + rcmail.get_label('add') + '"><span class="inner">+</span></a>')
+        .on('click', function (e) { e.preventDefault(); addFn(); }).appendTo(td);
+    $('<a href="#" class="button delete del" title="' + rcmail.get_label('delete') + '"><span class="inner">-</span></a>')
+        .on('click', function (e) { e.preventDefault(); delFn(); }).appendTo(td);
+    return td;
+}
+
 function avuz_add_cond(c) {
     c = c || {};
-    var row = $('<div class="af-cond-row form-group row">');
-    row.append(avuz_field_select(c.field), avuz_op_select(c.op),
-        $('<input class="af-val form-control" type="text">').val(c.value || ''),
-        $('<a href="#" class="icon delete" title="' + rcmail.get_label('delete') + '">✕</a>')
-            .on('click', function (e) { e.preventDefault(); row.remove(); }));
-    $('#af-conditions').append(row);
+    var tr = $('<tr class="af-cond-row">');
+    tr.append($('<td>').append(avuz_field_select(c.field)),
+              $('<td>').append(avuz_op_select(c.op)),
+              $('<td>').append($('<input class="af-val form-control" type="text">').val(c.value || '')),
+              avuz_rowbuttons(function () { avuz_add_cond(); },
+                              function () { if ($('#af-conditions tr').length > 1) tr.remove(); }));
+    $('#af-conditions tbody').append(tr);
 }
 
 function avuz_add_action(a) {
     a = a || {};
-    var row = $('<div class="af-action-row form-group row">');
+    var tr = $('<tr class="af-action-row">');
     var typ = $('<select class="af-atype form-control custom-select">');
     [['move', 'movetofolder'], ['mark_read', 'markread'], ['flag', 'flagmsg'], ['delete', 'deletemsg']]
         .forEach(function (p) { typ.append($('<option>').val(p[0]).text(rcmail.get_label('avuz_filters.' + p[1]))); });
@@ -77,9 +86,11 @@ function avuz_add_action(a) {
     var fld = avuz_folder_select(a.folder);
     var toggle = function () { fld.toggle(typ.val() === 'move'); };
     typ.on('change', toggle);
-    row.append(typ, fld, $('<a href="#" class="icon delete" title="' + rcmail.get_label('delete') + '">✕</a>')
-        .on('click', function (e) { e.preventDefault(); row.remove(); }));
-    $('#af-actions').append(row);
+    tr.append($('<td>').append(typ),
+              $('<td>').append(fld),
+              avuz_rowbuttons(function () { avuz_add_action(); },
+                              function () { if ($('#af-actions tr').length > 1) tr.remove(); }));
+    $('#af-actions tbody').append(tr);
     toggle();
 }
 
@@ -88,13 +99,11 @@ function avuz_edit(rule) {
     $('#af-name').val(rule.name);
     $('#af-enabled').prop('checked', rule.enabled == 1);
     $('#af-match').val(rule.match_type || 'all');
-    $('#af-conditions').empty();
+    $('#af-conditions tbody').empty();
     (rule.conditions && rule.conditions.length ? rule.conditions : [{}]).forEach(avuz_add_cond);
-    $('#af-actions').empty();
+    $('#af-actions tbody').empty();
     (rule.actions && rule.actions.length ? rule.actions : [{}]).forEach(avuz_add_action);
     $('#avuz-filter-editor').data('filter_id', rule.filter_id || 0).show();
-    $('#af-delete').toggle(!!rule.filter_id);
-    // Elastic: reveal the content pane on mobile.
     if (window.UI && UI.show_content) UI.show_content(true);
 }
 
