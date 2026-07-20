@@ -37,3 +37,6 @@ scripts/deploy.prod.env
 
 # local PG password scratch (never commit)
 scripts/migrate/*-pg-password
+
+# prod DB dump (contains user data — never commit)
+prod-roundcube-postcutover.sql
