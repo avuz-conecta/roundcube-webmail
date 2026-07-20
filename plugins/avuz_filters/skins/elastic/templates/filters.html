@@ -31,7 +31,7 @@
 				class="delete disabled" classAct="delete" />
 			<roundcube:button command="plugin.avuz_filters.apply_existing" type="link"
 				label="avuz_filters.applyexisting" title="avuz_filters.applyexisting" innerClass="inner"
-				class="button reload" />
+				class="button refresh" />
 		</div>
 	</div>
 
@@ -55,11 +55,15 @@
 			</div>
 		</fieldset>
 
-		<h3 class="propform-title"><roundcube:label name="avuz_filters.rules" /></h3>
-		<table class="propform records-table" id="af-conditions"><tbody></tbody></table>
+		<fieldset class="propform">
+			<legend><roundcube:label name="avuz_filters.rules" /></legend>
+			<table class="records-table" id="af-conditions"><tbody></tbody></table>
+		</fieldset>
 
-		<h3 class="propform-title"><roundcube:label name="avuz_filters.actions" /></h3>
-		<table class="propform records-table" id="af-actions"><tbody></tbody></table>
+		<fieldset class="propform">
+			<legend><roundcube:label name="avuz_filters.actions" /></legend>
+			<table class="records-table" id="af-actions"><tbody></tbody></table>
+		</fieldset>
 
 		<div class="formbuttons">
 			<input type="button" id="af-save" class="btn btn-primary submit" />

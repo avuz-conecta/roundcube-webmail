@@ -1,9 +1,10 @@
-/* Condition / action rows as native records-table */
-#af-conditions, #af-actions { width: 100%; margin: .25em 0 1em; }
-#af-conditions td, #af-actions td { padding: .25em .35em; vertical-align: middle; }
+/* Condition / action rows: compact, aligned, native records-table look */
+#af-conditions, #af-actions { width: 100%; margin: .25em 0; }
+#af-conditions td, #af-actions td { padding: .2em .3em; vertical-align: middle; }
+#af-conditions .af-field, #af-conditions .af-op,
+#af-actions .af-atype { width: auto; min-width: 7em; }
 #af-conditions .af-val { width: 100%; }
-#af-conditions select, #af-actions select { width: auto; min-width: 8em; }
-#af-conditions .af-afolder, #af-actions .af-afolder { min-width: 14em; }
+#af-actions .af-afolder, #af-actions .af-fwd { width: 100%; }
 td.rowbuttons { white-space: nowrap; width: 1%; text-align: right; }
-td.rowbuttons .button { margin-left: .25em; }
-h3.propform-title { margin: 1em 0 .35em; font-weight: 600; }
+td.rowbuttons .button { margin-left: .35em; opacity: .7; }
+td.rowbuttons .button:hover { opacity: 1; }
