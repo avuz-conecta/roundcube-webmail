@@ -36,7 +36,7 @@ A Roundcube plugin (`avuz_filters`) applies user-defined rules to the user's **I
 2. From `avuz_filter_state`, get `last_uid` for INBOX; fetch INBOX messages with `UID > last_uid` (headers only: from/to/cc/subject).
 3. For each new message, evaluate rules in order; apply the **first matching** rule's actions (Sieve-like first-match).
 4. Advance `last_uid` to the highest processed UID.
-5. **Bounded work:** cap messages per pass (e.g. 200) so page loads never stall; a large backlog drains across subsequent refreshes. Wrap the whole pass in a short time budget; on timeout, commit progress and continue next trigger.
+5. **Bounded work:** cap **1,000 messages per pass**; a larger backlog drains across subsequent refreshes. Also wrap the pass in a short time budget — whichever limit (1,000 msgs or the time budget) hits first commits progress (`last_uid`) and continues on the next trigger, so page loads never stall.
 
 ### Actions (V1, pure IMAP on the live session)
 - **Move to folder** — `UID MOVE` (or `COPY` + `\Deleted` + `EXPUNGE` fallback).
@@ -86,8 +86,12 @@ Dramatically smaller than the rejected daemon: **no stored passwords, no new alw
 - Coverage for Outlook/phone-primary users (would require the delivery-time/daemon approach we rejected on security grounds — revisit with a safer credential model, e.g. per-user OAuth XOAUTH2 if Zoho ever supports it).
 - Forwarding, more conditions/operators, additional folders beyond INBOX.
 
+## Resolved decisions
+
+- **Per-pass cap = 1,000 messages** (plus a time budget as a secondary guard).
+- **First-match** — a message gets the first matching rule's actions only (Sieve-like).
+- **INBOX-only** for V1.
+
 ## Open questions
 
-- Per-pass message cap + time budget defaults (200 / a few seconds proposed) — tune on staging.
-- First-match vs apply-all-matching — proposed first-match (Sieve-like); confirm at planning.
-- INBOX-only for V1 (proposed) vs also filtering other folders.
+None blocking. Time-budget seconds value to tune on staging.
