@@ -27,3 +27,5 @@ $labels['appliedn']      = 'Filters applied to $n message(s).';
 $labels['nofilters']     = 'No filters yet.';
 $labels['needcondaction']= 'A filter needs at least one condition and one action.';
 $labels['deleteconfirm'] = 'Delete this filter?';
+$labels['forwardto']         = 'Redirect message to';
+$labels['forwardplaceholder']= 'email@example.com';

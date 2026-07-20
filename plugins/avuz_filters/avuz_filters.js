@@ -80,14 +80,16 @@ function avuz_add_action(a) {
     a = a || {};
     var tr = $('<tr class="af-action-row">');
     var typ = $('<select class="af-atype form-control custom-select">');
-    [['move', 'movetofolder'], ['mark_read', 'markread'], ['flag', 'flagmsg'], ['delete', 'deletemsg']]
+    [['move', 'movetofolder'], ['mark_read', 'markread'], ['flag', 'flagmsg'], ['forward', 'forwardto'], ['delete', 'deletemsg']]
         .forEach(function (p) { typ.append($('<option>').val(p[0]).text(rcmail.get_label('avuz_filters.' + p[1]))); });
     typ.val(a.type || 'move');
     var fld = avuz_folder_select(a.folder);
-    var toggle = function () { fld.toggle(typ.val() === 'move'); };
+    var fwd = $('<input class="af-fwd form-control" type="email" autocomplete="off">')
+        .attr('placeholder', rcmail.get_label('avuz_filters.forwardplaceholder')).val(a.to || '');
+    var toggle = function () { var t = typ.val(); fld.toggle(t === 'move'); fwd.toggle(t === 'forward'); };
     typ.on('change', toggle);
     tr.append($('<td>').append(typ),
-              $('<td>').append(fld),
+              $('<td>').append(fld, fwd),
               avuz_rowbuttons(function () { avuz_add_action(); },
                               function () { if ($('#af-actions tr').length > 1) tr.remove(); }));
     $('#af-actions tbody').append(tr);
@@ -116,7 +118,9 @@ function avuz_collect() {
     var actions = [];
     $('#af-actions .af-action-row').each(function () {
         var t = $('.af-atype', this).val();
-        actions.push(t === 'move' ? { type: 'move', folder: $('.af-afolder', this).val() } : { type: t });
+        if (t === 'move') actions.push({ type: 'move', folder: $('.af-afolder', this).val() });
+        else if (t === 'forward') { var to = $('.af-fwd', this).val(); if (to) actions.push({ type: 'forward', to: to }); }
+        else actions.push({ type: t });
     });
     return {
         filter_id: $('#avuz-filter-editor').data('filter_id') || 0,

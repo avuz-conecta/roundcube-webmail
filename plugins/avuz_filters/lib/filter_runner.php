@@ -58,7 +58,8 @@ class avuz_filter_runner
         $start = microtime(true);
         $acted = 0; $maxUid = $last;
 
-        // Fetch headers once for the batch.
+        // Include our loop-guard marker header in the fetch, then fetch the batch.
+        $storage->set_options(['fetch_headers' => 'X-Avuz-Forwarded']);
         $headersList = $storage->fetch_headers($folder, $uids, false);
         foreach ($uids as $uid) {
             if (microtime(true) - $start > self::TIME_BUDGET) break;
@@ -71,9 +72,11 @@ class avuz_filter_runner
                 'cc'      => (string) $h->cc,
                 'subject' => (string) $h->subject,
             ];
+            // Already redirected by us → don't redirect again (loop guard).
+            $already_fwd = !empty($h->others['x-avuz-forwarded']);
             $actions = avuz_rule_engine::match($hv, $rules);
             if ($actions) {
-                self::apply($storage, $folder, $trash, (int) $uid, $actions);
+                self::apply($rcmail, $storage, $folder, $trash, (int) $uid, $actions, $already_fwd);
                 $acted++;
             }
         }
@@ -94,19 +97,56 @@ class avuz_filter_runner
      * order the actions were configured in. Prevents dropping later actions and
      * prevents flagging a message that already left the folder.
      */
-    private static function apply($storage, string $folder, string $trash, int $uid, array $actions): void
+    private static function apply(rcmail $rcmail, $storage, string $folder, string $trash, int $uid, array $actions, bool $already_fwd): void
     {
-        $move_to = null;
+        $move_to = null; $fwd = [];
         foreach ($actions as $a) {
             switch ($a['type']) {
                 case 'mark_read': $storage->set_flag($uid, 'SEEN', $folder); break;
                 case 'flag':      $storage->set_flag($uid, 'FLAGGED', $folder); break;
-                case 'delete':    $move_to = $trash; break;                       // last-wins
+                case 'forward':   if (!empty($a['to'])) $fwd[] = $a['to']; break;  // copy, not terminal
+                case 'delete':    $move_to = $trash; break;                        // last-wins
                 case 'move':      if (!empty($a['folder'])) $move_to = $a['folder']; break;
             }
         }
+        // Redirect a copy to each target while the message is still in INBOX. Skip if
+        // this message is itself one of our redirects (loop guard).
+        if ($fwd && !$already_fwd) {
+            foreach ($fwd as $to) self::redirect($rcmail, $folder, $uid, $to);
+        }
         if ($move_to !== null) {
             $storage->move_message($uid, $move_to, $folder); // terminal: removes from INBOX
+        }
+    }
+
+    /**
+     * Redirect (resend) the original message untouched to $to (Sieve 'redirect'
+     * semantics — recipient sees the original sender). Uses Roundcube's native
+     * resend/bounce machinery + the user's in-session SMTP. Stamps X-Avuz-Forwarded
+     * so a copy that lands back can't be redirected again.
+     */
+    private static function redirect(rcmail $rcmail, string $folder, int $uid, string $to): void
+    {
+        try {
+            $message = new rcube_message((string) $uid, $folder);
+            if (empty($message->headers)) return;
+            $from = $rcmail->get_user_email();
+            $bounce_headers = [
+                'Resent-From'      => $from,
+                'Resent-To'        => $to,
+                'Resent-Date'      => date('r'),
+                'Resent-Message-ID'=> $rcmail->gen_message_id($from),
+                'X-Avuz-Forwarded' => '1',
+            ];
+            $BOUNCE = new rcmail_resend_mail([
+                'bounce_message' => $message,
+                'bounce_headers' => $bounce_headers,
+            ]);
+            $error = null;
+            $rcmail->deliver_message($BOUNCE, $from, $to, $error);
+            if ($error) rcube::write_log('errors', "avuz_filters redirect uid=$uid to=$to error=" . json_encode($error));
+        } catch (\Throwable $e) {
+            rcube::write_log('errors', 'avuz_filters redirect: ' . $e->getMessage());
         }
     }
 }
