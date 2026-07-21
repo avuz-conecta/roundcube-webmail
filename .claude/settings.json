@@ -12,5 +12,19 @@
       "Bash(git log*)",
       "Bash(docker compose -f deploy/stack.reference.yml config*)"
     ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/gate-mutating-commands.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
