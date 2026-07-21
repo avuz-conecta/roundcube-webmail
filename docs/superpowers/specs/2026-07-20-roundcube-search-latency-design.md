@@ -146,16 +146,26 @@ response on a warm connection cannot otherwise take 13 seconds. The plugin built
 make message opening faster is plausibly the largest single source of latency in the
 product.
 
-**Fix:** IMAP permits multiple body sections per `FETCH`, and `BODYSTRUCTURE` batches
-across UIDs:
+**Where the round trips actually come from.** Not the body loop — `is_text()` filters
+non-text parts, so the many `BODY.PEEK[N.MIME]` commands are not ours. They come from
+`new rcube_message()` building structure: `rcube_imap.php:2097-2103` batches MIME
+header fetches, but only within a single nesting level, and `_structure_part()`
+recurses. Its own `@TODO` at `:2098` acknowledges this. Nested multipart mail
+therefore costs one FETCH per level.
 
-```
-UID FETCH 2430,2434,2442,… (BODYSTRUCTURE)        # 1 round trip, whole batch
-UID FETCH 2434 (BODY.PEEK[1.1] BODY.PEEK[1.2])    # 1 round trip per message
-```
+**Fix (Wave 1): make prefetch idempotent.** The plugin rebuilds every message's
+structure on every run even when its bodies are already cached, and `prefetch.js`
+keeps its `seen{}` map in a plain object that resets on each page load — so the same
+messages are re-warmed continuously. A per-message "done" sentinel in Redis lets
+`prefetch()` skip a warmed message *before* constructing `rcube_message`, costing zero
+round trips; persisting `seen{}` to `sessionStorage` stops the client re-queueing them.
+Together these remove the repeat traffic, which is the bulk of it.
 
-Batch of 10: ~70 round trips → ~11. Bandwidth is unchanged (text parts only, no
-attachments), so Zoho's 1 GB/15min cap is unaffected.
+**Deferred: batching `BODY.PEEK` across parts.** IMAP permits multiple body sections
+per `FETCH`, so a first warm could in principle cost ~11 round trips instead of ~70.
+But the expensive commands are issued by core's structure walk, not by our loop, so
+capturing that win requires patching `rcube_imap.php` — a cost on every upstream
+rebase. Revisit only if Task 6's measurements show first-warm latency still dominates.
 
 Secondary: `deploy/stack.reference.yml:46` caps Redis at `128mb` with `allkeys-lru`,
 shared across sessions, `imap_cache`, and every prefetched body. Bodies are the
@@ -241,7 +251,7 @@ Reversible, no new services, no schema.
 
 | Change | Where | From → To |
 |---|---|---|
-| **Batch prefetch FETCHes** | `plugins/avuz_prefetch/avuz_prefetch.php:90-112` | ~70 round trips per batch → ~11 |
+| **Make prefetch idempotent** | `plugins/avuz_prefetch/avuz_prefetch.php:90-112`, `prefetch.js:11,43-58` | re-warms every page load → warms once |
 | **Dedupe filter pass** | `plugins/avuz_filters/avuz_filters.php:23-24` | runs twice per refresh → once |
 | **ESEARCH for index queries** | `config/config.inc.php` | set `skip_deleted = true` |
 | Idle connection lifetime | `docker/imapproxy-sidecar/imapproxy.conf:8` | `60` → `1800` |
