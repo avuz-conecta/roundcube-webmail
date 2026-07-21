@@ -50,6 +50,9 @@
       <directory suffix=".php">./../plugins/managesieve/tests</directory>
       <file>./../plugins/markasjunk/tests/Markasjunk.php</file>
       <file>./../plugins/nextcloud_sso/tests/NextcloudSso.php</file>
+      <file>./../plugins/avuz_filters/tests/rule_engine_test.php</file>
+      <file>./../plugins/avuz_filters/tests/run_guard_test.php</file>
+      <file>./../plugins/avuz_prefetch/tests/prefetch_cache_test.php</file>
       <file>./../plugins/password/tests/ZohoBroker.php</file>
       <file>./../plugins/new_user_dialog/tests/NewUserDialog.php</file>
       <file>./../plugins/new_user_identity/tests/NewUserIdentity.php</file>
