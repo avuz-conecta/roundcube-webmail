@@ -253,7 +253,7 @@ Reversible, no new services, no schema.
 |---|---|---|
 | **Make prefetch idempotent** | `plugins/avuz_prefetch/avuz_prefetch.php:90-112`, `prefetch.js:11,43-58` | re-warms every page load → warms once |
 | **Dedupe filter pass** | `plugins/avuz_filters/avuz_filters.php:23-24` | runs twice per refresh → once |
-| **ESEARCH for index queries** | `config/config.inc.php` | set `skip_deleted = true` |
+| ~~ESEARCH for index queries~~ | evaluated and **rejected** — see below | |
 | Idle connection lifetime | `docker/imapproxy-sidecar/imapproxy.conf:8` | `60` → `1800` |
 | Redis ceiling | `deploy/stack.reference.yml:46` | `128mb` → `512mb` (starting value, see below) |
 | Response compression | `docker/nginx.conf` | add gzip for HTML/JS/CSS/JSON |
@@ -285,43 +285,33 @@ identical `UID SEARCH RETURN (ALL) UID 942:*` — and in the log, with runs at
 Further gating on `LIST-STATUS` (skip entirely when nothing arrived) lands in Wave 2,
 where that data is already being collected.
 
-**`skip_deleted = true` enables ESEARCH.** `rcube_imap_generic::search()` only
-requests ESEARCH when the criteria string contains a non-digit:
+**`skip_deleted = true` was evaluated and rejected.** It would have enabled ESEARCH on
+index queries: `rcube_imap_generic::search()` only requests ESEARCH when the criteria
+string contains a non-digit, and with `skip_deleted = false` an unfiltered index query
+has empty criteria — so Roundcube issues plain `UID SEARCH ALL` and Zoho returns ~16,000
+individual UIDs per message-list request on the largest mailbox. `UNDELETED` would have
+tripped the check and produced compact ranges.
 
-```php
-if (empty($items) && preg_match('/[^0-9]/', $criteria)) {
-    $items = ['ALL'];
-}
-```
+Rejected for three reasons:
 
-With `skip_deleted = false` (the current default) and no search term, `$criteria` is
-empty, so the check fails and Roundcube issues plain `UID SEARCH ALL` — returning
-every UID individually (~16,000 numbers, ~100 kB on the large account, per
-message-list request). Setting `skip_deleted = true` makes the criteria `UNDELETED`,
-which enables `UID SEARCH RETURN (ALL) UNDELETED` and returns compact ranges instead.
+1. **Wrong risk class.** `skip_deleted` hides any message flagged `\Deleted` from the
+   list, the counts, the badges **and search**, regardless of what set the flag. IMAP
+   deletion is two steps — set `\Deleted`, then `EXPUNGE` — so a client that defers the
+   expunge, or an interrupted COPY-flag-EXPUNGE move (how Roundcube itself deletes,
+   `rcube_imap.php:2801-2848`), leaves a message flagged but present. It goes invisible in
+   Roundcube while visible elsewhere, and the user cannot recover what they cannot see.
 
-Verify during rollout that this does not hide mail: it suppresses messages flagged
-`\Deleted`, and Zoho moves deletions to Lixeira rather than flagging in place, so the
-expected impact is nil — but confirm rather than assume.
+2. **Benefit unproven, possibly negative.** `countmessages()` (`rcube_imap.php:758-778`)
+   swaps a cheap `STATUS` for a live `SEARCH` on unread counts — core's own comment reads
+   *"not very performant but more precise"*. And when the count comes from cache,
+   `icache['undeleted_idx']` is never populated, so `rcube_imap_cache::validate()` issues
+   `ALL UNDELETED NOT UID <compressed-set>` — uploading a large UID set on every warm list
+   request, against the 1 GB / 15 min budget.
 
-**The sort-column issue is deliberately not fixed here.** See "Narrow issue: the
-missing SORT capability" above — it affects 12 of 97 users, and Wave 2 removes the
-cost for everyone regardless. Three fixes were considered and all rejected as poor
-value for an interim window:
+3. **It confounds the measurement.** Wave 1's staging numbers decide whether Wave 2 gets
+   built. Two candidate causes for a disappointing result makes those numbers useless.
 
-- *One-off SQL* unsetting `message_sort_col` where it is `arrival` — fixes 11 users,
-  but any of them can re-select it in the UI and land back on the slow path.
-- *`dont_override`* — adding `message_sort_col` to `$config['dont_override']` hides
-  the control (`skins/elastic/templates/mail.html:176`) and blocks the save
-  (`program/actions/mail/list.php:45`), forcing the config default for everyone.
-  Config-only and durable, but strips sort-by-subject/from/size from all 97 users. A
-  UX regression to buy a perf win for 12.
-- *Code patch* normalizing `arrival` → `''` on save and read — correct and keeps every
-  sort option, but adds a core patch to carry across upstream rebases.
-
-Revisit only if Wave 2 slips.
-
-Expected effect: improves A, B, folder switch, and open. **Does not fix C.**
+If revisited, ship it alone with its own before/after and a live `\Deleted`-flag test.
 
 ### Wave 2 — local search index
 

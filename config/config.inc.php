@@ -34,26 +34,14 @@ if ($useProxy) {
 }
 $config['imap_timeout'] = 15;
 
-// Zoho advertises ESEARCH but rcube_imap_generic::search() only requests it when
-// the criteria string contains a non-digit. With skip_deleted=false the criteria
-// for an unfiltered index query is empty, so Roundcube falls back to plain
-// UID SEARCH ALL — ~16,000 individual UIDs per message-list request on our
-// largest mailbox. skip_deleted=true makes the criteria 'UNDELETED', which
-// enables UID SEARCH RETURN (ALL) and compact ranges.
-// Premise: Zoho moves deletions to Lixeira rather than flagging \Deleted in
-// place, so nothing should disappear. NOT YET VERIFIED against a live mailbox.
-//
-// RISK: this hides ANY message flagged \Deleted, whatever set the flag — not
-// just Zoho's own delete path. A phone or desktop IMAP client that flags and
-// defers the expunge (standard Apple Mail behavior) would make that message
-// vanish from Roundcube's list, counts, badges AND search, while remaining
-// visible everywhere else. Revert this line immediately if that is observed.
-//
-// Also note countmessages() (rcube_imap.php:758) switches UNSEEN counting from
-// a cheap STATUS to a live SEARCH. Bounded to INBOX while check_all_folders is
-// false. The ALL count is cached and reused by index_direct() (:1502), so the
-// message-list path still nets out to one ESEARCH instead of UID SEARCH ALL.
-$config['skip_deleted'] = true;
+// NOTE: skip_deleted is deliberately left at its default (false).
+// Setting it true would enable ESEARCH on index queries (compact UID ranges
+// instead of ~16,000 individual UIDs), but it was evaluated and rejected —
+// see docs/superpowers/specs/2026-07-20-roundcube-search-latency-design.md.
+// Short version: it hides any message flagged \Deleted from the list, counts
+// AND search regardless of what set the flag, and the performance benefit is
+// unproven (it also swaps cheap STATUS counts for live SEARCH, and can add an
+// 'ALL UNDELETED NOT UID <set>' upload on warm list requests).
 
 // -- SMTP (Zoho) --
 $config['smtp_server'] = 'tls://smtp.zoho.com';

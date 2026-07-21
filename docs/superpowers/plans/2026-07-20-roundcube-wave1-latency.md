@@ -525,74 +525,45 @@ been present but never wired into the suite."
 
 ---
 
-### Task 4: Enable ESEARCH for index queries
+### Task 4: Enable ESEARCH for index queries — REVERTED, NOT SHIPPING
 
-`rcube_imap_generic::search()` only requests ESEARCH when the criteria string contains a non-digit. With `skip_deleted` at its default `false` and no search term, the criteria is empty, so Roundcube issues plain `UID SEARCH ALL` and Zoho returns every UID individually — roughly 16,000 numbers (~100 kB) per message-list request on the largest account. Setting `skip_deleted = true` makes the criteria `UNDELETED`, which enables `UID SEARCH RETURN (ALL) UNDELETED` and compact ranges.
+**Status: implemented in `5185a5f2a`, then reverted before staging.** The analysis below
+is kept because it is correct and someone will otherwise rediscover it from scratch.
 
-**Files:**
-- Modify: `config/config.inc.php` (add after the `imap_timeout` line at `:35`)
+**What it was.** `rcube_imap_generic::search()` only requests ESEARCH when the criteria
+string contains a non-digit. With `skip_deleted` at its default `false` and no search term
+the criteria is empty, so Roundcube issues plain `UID SEARCH ALL` and Zoho returns every
+UID individually — roughly 16,000 numbers (~100 kB) per message-list request on the largest
+account. Setting `skip_deleted = true` makes the criteria `UNDELETED`, which enables
+`UID SEARCH RETURN (ALL) UNDELETED` and compact ranges.
 
-**Interfaces:**
-- Consumes: nothing.
-- Produces: nothing consumed by later tasks.
+**Why it was reverted — three reasons, in order of weight.**
 
-- [ ] **Step 1: Confirm the mechanism in core before changing config**
+1. **Wrong risk class.** `skip_deleted` hides any message flagged `\Deleted` from the message
+   list, the folder totals, the unread badges **and search** — regardless of what set the flag.
+   IMAP deletion is two steps: something sets `\Deleted` ("intend to delete"), then `EXPUNGE`
+   actually removes it. A client that flags and defers the expunge, or an interrupted
+   COPY-then-flag-then-expunge move (which is how Roundcube itself deletes,
+   `rcube_imap.php:2801-2848`), leaves a message flagged but present. That message becomes
+   invisible in Roundcube while remaining visible elsewhere — and the user cannot recover it,
+   because they cannot see it to act on it. "User cannot find a message that exists" is the
+   worst failure mode a mail client has.
 
-```bash
-sed -n '/If ESEARCH is supported always use ALL/,/^        \$esearch/p' program/lib/Roundcube/rcube_imap_generic.php
-```
+2. **The performance benefit is unproven and may be negative.** `countmessages()`
+   (`rcube_imap.php:758-778`) switches UNSEEN counting from a cheap `STATUS` to a live
+   `SEARCH` — core's own comment says *"not very performant but more precise"*. And when the
+   count is served from cache, `icache['undeleted_idx']` is never populated, so
+   `rcube_imap_cache::validate()` falls through to a branch issuing
+   `ALL UNDELETED NOT UID <compressed-uid-set>` — an *upload* of a potentially large UID set
+   on every warm list request, against Zoho's 1 GB / 15 min account budget. Net sign unknown.
 
-Expected output includes:
+3. **It confounds Wave 1's measurement.** Tasks 1-3 fix the actual problem (the prefetch loop
+   generating ~70 round trips per batch, continuously). If a disappointing staging result had
+   two candidate causes, the numbers could not decide whether Wave 2 gets built.
 
-```php
-        if (empty($items) && preg_match('/[^0-9]/', $criteria)) {
-            $items = ['ALL'];
-        }
-```
-
-This is the gate: an empty `$criteria` fails `preg_match`, so `$items` stays empty and ESEARCH is never requested.
-
-- [ ] **Step 2: Add the config**
-
-In `config/config.inc.php`, immediately after `$config['imap_timeout'] = 15;` at `:35`, insert:
-
-```php
-// Zoho advertises ESEARCH but rcube_imap_generic::search() only requests it when
-// the criteria string contains a non-digit. With skip_deleted=false the criteria
-// for an unfiltered index query is empty, so Roundcube falls back to plain
-// UID SEARCH ALL — ~16,000 individual UIDs per message-list request on our
-// largest mailbox. skip_deleted=true makes the criteria 'UNDELETED', which
-// enables UID SEARCH RETURN (ALL) and compact ranges.
-// Safe on Zoho: deletions move to Lixeira rather than being flagged \Deleted
-// in place. Verified in Task 6.
-$config['skip_deleted'] = true;
-```
-
-- [ ] **Step 3: Verify the file parses**
-
-```bash
-php -l config/config.inc.php
-```
-
-Expected: `No syntax errors detected in config/config.inc.php`.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add config/config.inc.php
-git commit -m "perf(imap): enable ESEARCH via skip_deleted
-
-rcube_imap_generic::search() requests ESEARCH only when the criteria contains a
-non-digit. With skip_deleted=false an unfiltered index query has empty criteria,
-so Roundcube issued plain UID SEARCH ALL and Zoho returned every UID
-individually — ~16,000 numbers per message-list request on the largest account.
-
-skip_deleted=true makes the criteria UNDELETED, enabling
-UID SEARCH RETURN (ALL) and compact ranges. Zoho moves deletions to Lixeira
-rather than flagging in place, so no mail is hidden."
-```
-
----
+**If revisited:** ship it alone, with its own before/after, and gate it on a live test —
+flag a message `\Deleted` over raw IMAP without expunging (`UID STORE <uid> +FLAGS (\Deleted)`)
+and confirm whether Roundcube still lists, counts and finds it. One variable at a time.
 
 ### Task 5: Tune imapproxy, Redis, and nginx
 
@@ -821,31 +792,6 @@ trips of background IMAP. What Wave 1 removes is the *repeat* traffic. So record
 If second visits have NOT dropped, Task 1's sentinel is not being read — check for the poisoned-
 sentinel case in Step 6c before concluding anything else.
 
-- [ ] **Step 5b: Check whether `skip_deleted` added a command to the warm list path**
-
-`skip_deleted = true` was justified on the message-list path netting one ESEARCH instead of an
-uncompressed `UID SEARCH ALL`. That reasoning holds only while `icache['undeleted_idx']` is
-populated, which requires `countmessages()` to actually issue its SEARCH. When the count comes
-from cache instead (`rcube_imap.php:731-733`), `rcube_imap_cache::validate()` falls through to a
-different branch that issues:
-
-```
-ALL UNDELETED NOT UID <compressed-uid-set>
-```
-
-On the 16k mailbox that uploads a potentially large UID set to Zoho on **every warm list
-request** — upload counted against the 1 GB / 15 min account budget. `avuz_filters` moving mail
-out of INBOX fragments the UID set, which inflates it further.
-
-```bash
-PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
-  ./scripts/portainer-exec.sh -u www-data avuz-mail-roundcube-2-roundcube-1 \
-  sh -c "grep -c 'NOT UID' /var/www/roundcube/logs/imap.log; grep -m1 -o 'ALL UNDELETED NOT UID.\{0,400\}' /var/www/roundcube/logs/imap.log | wc -c"
-```
-
-Zero matches: the justification holds. Any matches: record the byte size — if it is large, that
-is a reason to revert `skip_deleted` regardless of how Step 7b's correctness check turns out.
-
 - [ ] **Step 6: Check Redis evictions**
 
 ```bash
@@ -931,25 +877,15 @@ So sample during a real page-load burst, not at rest. If the count approaches 20
 `cache_size` (it costs only file descriptors and memory in the sidecar) rather than lowering
 `cache_expiration_time` — the expiration is what buys the latency win.
 
-- [ ] **Step 7: Verify `skip_deleted` hides no mail**
+- [ ] **Step 7: Confirm no message-visibility regression**
 
-Two checks, not one. The second is the important one.
+`skip_deleted` was evaluated and rejected (see Task 4), so no setting in this wave
+changes which messages are visible. This step is a plain sanity check, not a gate:
+in the staging UI, confirm per-folder totals and unread badges match what they were
+before deployment, and that nothing visible before is missing now.
 
-**7a — before/after comparison.** In the staging UI, confirm total message counts per folder match what they were before the change, and that no message visible before deployment has disappeared.
-
-**7b — stray `\Deleted` flag.** The premise behind `skip_deleted` is that Zoho moves deletions to Lixeira rather than flagging in place. That premise covers Zoho's *own* UI, not other clients. `skip_deleted` hides any message carrying the flag, whatever set it — and a phone or desktop client that flags then defers the expunge (standard Apple Mail behavior) would make a message vanish from Roundcube's list, counts, badges **and search** while staying visible everywhere else.
-
-Test it directly. Against the staging mailbox, flag a message `\Deleted` without expunging:
-
-```
-A1 LOGIN <user> <pass>
-A2 SELECT INBOX
-A3 UID STORE <uid> +FLAGS (\Deleted)
-```
-
-Then, in Roundcube: reload the folder and confirm whether that message is still listed, still counted in the folder total, still in the unread badge if it was unread, and still findable by searching its subject. Clear the flag afterwards with `UID STORE <uid> -FLAGS (\Deleted)`.
-
-**If the message disappears from any of those, revert `skip_deleted` immediately** — it is a one-line config change and correctness outranks the ESEARCH win. Record the outcome in the results doc either way; this is the finding that decides whether the setting ships to prod.
+If anything IS missing, stop — none of Wave 1's changes should affect message
+visibility, so a discrepancy means something unexpected happened.
 
 - [ ] **Step 8: Verify prefetch still warms correctly**
 
