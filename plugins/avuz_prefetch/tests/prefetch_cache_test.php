@@ -27,21 +27,46 @@ class prefetch_cache_test extends TestCase
         $this->assertFalse(avuz_prefetch_cache::is_warm(new fake_cache(), 'INBOX', 941));
     }
 
-    function testReportsWarmAfterMarking() {
+    function testReportsWarmWhenSentinelAndBodiesArePresent() {
         $cache = new fake_cache();
-        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941);
+        $cache->set(avuz_prefetch_cache::body_key('INBOX', 941, '1.1'), '<p>hi</p>');
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1']);
         $this->assertTrue(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+    }
+
+    function testNotWarmWhenSentinelExistsButBodyWasEvicted() {
+        $cache = new fake_cache();
+        // Simulate LRU eviction: sentinel written, but the body key it points
+        // at was reclaimed (never set, or removed) before the check.
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1']);
+        $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+    }
+
+    function testNotWarmForLegacyPlainOneSentinel() {
+        $cache = new fake_cache();
+        // Pre-fix code wrote the literal string '1' as the sentinel value.
+        $cache->data[avuz_prefetch_cache::done_key('INBOX', 941)] = '1';
+        $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+    }
+
+    function testNotMarkedWarmWhenNothingWasCacheable() {
+        $cache = new fake_cache();
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, []);
+        $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+        $this->assertSame(0, $cache->writes);
     }
 
     function testWarmthIsScopedPerFolder() {
         $cache = new fake_cache();
-        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941);
+        $cache->set(avuz_prefetch_cache::body_key('INBOX', 941, '1.1'), '<p>hi</p>');
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1']);
         $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'Enviadas', 941));
     }
 
     function testWarmthIsScopedPerUid() {
         $cache = new fake_cache();
-        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941);
+        $cache->set(avuz_prefetch_cache::body_key('INBOX', 941, '1.1'), '<p>hi</p>');
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1']);
         $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 942));
     }
 
@@ -50,7 +75,7 @@ class prefetch_cache_test extends TestCase
     }
 
     function testMarkingWithoutCacheDoesNotError() {
-        avuz_prefetch_cache::mark_warm(false, 'INBOX', 941);
+        avuz_prefetch_cache::mark_warm(false, 'INBOX', 941, ['1.1']);
         $this->assertTrue(true);
     }
 }

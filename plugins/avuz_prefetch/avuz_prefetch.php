@@ -108,6 +108,7 @@ class avuz_prefetch extends rcube_plugin
                     continue;
                 }
 
+                $cachedMimeIds = [];
                 foreach ($message->mime_parts as $mimeId => $part) {
                     if (!$this->is_text($part)) {
                         continue;
@@ -117,10 +118,11 @@ class avuz_prefetch extends rcube_plugin
                     $body = $message->get_part_body($mimeId, false, 0);
                     if ($cache && is_string($body) && $body !== '') {
                         $cache->set($this->key($message->folder, $uid, $mimeId), $body);
+                        $cachedMimeIds[] = $mimeId;
                     }
                 }
 
-                avuz_prefetch_cache::mark_warm($cache, $folder, $uid);
+                avuz_prefetch_cache::mark_warm($cache, $folder, $uid, $cachedMimeIds);
             } catch (Throwable $e) {
                 rcube::raise_error("avuz_prefetch uid {$uid}: " . $e->getMessage(), true, false);
             }
