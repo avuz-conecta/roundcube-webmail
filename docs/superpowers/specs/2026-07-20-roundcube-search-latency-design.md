@@ -14,6 +14,32 @@ Client reports, verbatim:
 - Lentidão no envio e troca de pastas
 - Lentidão para abrir e-mails
 
+**Product driver:** the client also asked for **all-folder search to be the default
+scope**. On today's code that search costs 12.82s (see Evidence), so shipping the
+default now would make the slowest operation in the product the default one. Two
+aggravators: `set_timelimit(60)` aborts long multi-folder searches and returns
+*silently partial* results, which reads as missing mail; and per-search load on Zoho
+multiplies by the folder count across all users.
+
+This makes Wave 2 a **prerequisite**, not an optimization. Sequencing rule:
+**all-folder-default ships with Wave 2 and never before it.**
+
+Note there is no configuration option for the default scope — it is session state set
+per search at `program/actions/mail/search.php:120`. Making it the default requires a
+small plugin or patch, scoped into Wave 2.
+
+## Mailbox size distribution
+
+Measured/estimated across the 97 prod users:
+
+| Segment | Count | Messages |
+|---|---|---|
+| Typical | ~77 | hundreds |
+| Large | ~20 | thousands |
+| Worst observed | 1 | ~16,000 |
+
+This sets engineering constraints, not architecture — see Wave 2.
+
 ## Evidence
 
 Measured 2026-07-20, prod (`avuz-mail-roundcube-*`, Portainer endpoint 5).
@@ -223,6 +249,17 @@ criteria into SQL against the index, returns a `rcube_result_multifolder` of
 `uid-folder` identifiers. Roundcube's existing paging code then fetches the visible
 headers over IMAP as it does today.
 
+**Headers only — no bodies.** Justified by two measurements. First, body search on
+Zoho is cheap: test B (entire message) cost only ~740ms more than test A (subject).
+The 12.82s in test C was round-trip count, not body scanning. Second, the cost scales
+badly: for the 16k-message account, headers are ~5 MB while bodies would be several GB
+and hours of transfer, per user. Indexing bodies buys little and costs a lot.
+
+Consequence: `subject`/`from`/`to` searches are served locally. Body and "entire
+message" searches fall back to IMAP, where they already perform acceptably per-folder.
+All-folder *body* search remains slow; measure how often it is used before treating
+that as a gap.
+
 **Index schema** (Postgres, alongside the existing Roundcube tables):
 
 ```
@@ -238,39 +275,76 @@ avuz_search_message
   to_addr       text
   sent_at       timestamptz
   flags         text[]
-  body_text     text
-  tsv           tsvector generated from subject/from/to/body_text
   primary key (user_id, folder, uidvalidity, uid)
 
 avuz_search_state
-  user_id       int
-  folder        text
-  uidvalidity   bigint
+  user_id        int
+  folder         text
+  uidvalidity    bigint
   highest_modseq bigint
-  fully_indexed bool
+  fully_indexed  bool
+  indexed_upto   bigint      -- resume point for interrupted backfill
   last_synced_at timestamptz
   primary key (user_id, folder)
 ```
 
-GIN index on `tsv`. Text extraction reuses `avuz_prefetch`'s existing body-fetch code
-(`avuz_prefetch.php:80-119`), which already walks `mime_parts` and calls
-`get_part_body($mimeId, false, 0)` with BODY.PEEK so it never sets `\Seen`.
+**Trigram indexes, not `tsvector`.** This matters for correctness, not performance:
+
+```sql
+CREATE EXTENSION pg_trgm;
+CREATE INDEX ON avuz_search_message USING gin (lower(subject) gin_trgm_ops);
+-- likewise from_addr, to_addr
+```
+
+IMAP `SEARCH` does **substring** matching. `tsvector` does lexeme matching — it
+tokenizes and stems, so `relat` would not match `Relatório` and Portuguese stemming
+would silently diverge from current behavior. Users would perceive missing mail. With
+`pg_trgm` the plugin issues `lower(subject) LIKE '%' || lower(:term) || '%'`, which is
+the same operation IMAP performs today. Parity is the requirement; speed is the
+constraint.
+
+**Trigram indexes require ≥3 characters.** Queries shorter than that cannot use the
+index and fall back to IMAP — covered by the correctness rule below.
+
+Estimated size across all 97 users: low hundreds of MB, ~1 GB with trigram GIN.
+Negligible for Postgres.
 
 **Sync strategy — in-session, not a daemon.** The syncer runs inside the user's
-authenticated session, as `avuz_prefetch` does: background AJAX calls during idle
-time, walking folders and filling the index incrementally. This is deliberate.
+authenticated session, as `avuz_prefetch` does: background AJAX calls, indexing on
+`login_after`.
 
-A background daemon would need to re-authenticate to Zoho as each user without a
-session. Credentials are recoverable server-side today (the `avuz-password-broker`
-holds Zoho tenant OAuth credentials, and `ROUNDCUBE_CREDENTIAL_KEY` decrypts stored
-passwords), so a daemon is *feasible* — but it would widen the credential surface for
-a performance feature. In-session sync avoids that entirely and ships sooner. If cold-index
-latency proves unacceptable in practice, a broker-backed daemon is the documented
-follow-up, decided on evidence rather than up front.
+The backfill is small enough to make a daemon unnecessary. Envelope fetches batch, so
+a typical mailbox (~20 folders, hundreds of messages) costs roughly
+`1 + 2×20 = 41` round trips ≈ **8 seconds**. The 16k worst case is bandwidth-bound
+rather than RTT-bound: ~5 MB, so tens of seconds. Both complete well inside a single
+session, so there is nothing to converge toward.
 
-**Incremental updates** use CONDSTORE: `SELECT` returns `HIGHESTMODSEQ`, and
-`FETCH ... (CHANGEDSINCE <modseq>)` returns only messages changed since the last
-sync. Cheap and bounded.
+This also settles the credential question. A daemon would need to re-authenticate as
+each user without a session; credentials are recoverable server-side today (the
+`avuz-password-broker` holds Zoho tenant OAuth credentials and
+`ROUNDCUBE_CREDENTIAL_KEY` decrypts stored passwords), so it is *feasible* — but it
+would widen the credential surface for a performance feature that does not need it.
+Were a daemon ever required, the correct mitigation is `AUTH=XOAUTH2` (which Zoho
+advertises), eliminating recoverable passwords entirely — not more careful password
+handling. See Out of scope.
+
+Two constraints from the 16k case:
+
+- **Batch envelope fetches** (~1,000 UIDs per round trip). 16k envelopes in one PHP
+  array is a memory problem and a single ~5 MB response blocks the request.
+- **Make backfill resumable** via `avuz_search_state.indexed_upto`. A user who closes
+  the tab mid-index resumes on next login rather than restarting.
+
+**Incremental updates.** Zoho advertises `LIST-STATUS`, so a single round trip returns
+every folder's state:
+
+```
+LIST "" * RETURN (STATUS (MESSAGES UIDNEXT UIDVALIDITY HIGHESTMODSEQ))
+```
+
+Only folders whose `HIGHESTMODSEQ` advanced need a `SELECT`; those use CONDSTORE
+(`FETCH ... (CHANGEDSINCE <modseq>)`) to retrieve just the changes. Staying current
+therefore costs ~198ms plus work proportional to actual change.
 
 **Vanished messages.** Zoho has no `QRESYNC`, so CONDSTORE reports flag changes but
 not deletions. Reconciliation: periodically issue `UID SEARCH ALL` per folder — one
@@ -282,17 +356,27 @@ background, not on the interactive path.
 
 #### Correctness rule
 
-**If any folder in the query's scope is not `fully_indexed`, fall back to IMAP search
-for the whole query.** A fast wrong answer is worse than a slow right one. The index
-only serves searches it can answer completely.
+Fall back to IMAP search for the **whole query** when any of these hold:
 
-This makes the plugin safe to deploy before the index is warm: behavior is identical
-to today until a folder finishes indexing, then transparently faster.
+1. Any folder in scope is not `fully_indexed`.
+2. The search targets body or "entire message" (not indexed by design).
+3. The search term is shorter than 3 characters (trigram index unusable).
+
+A fast wrong answer is worse than a slow right one. The index only serves searches it
+can answer completely and with the same semantics as IMAP.
+
+This makes the plugin safe to deploy cold: behavior is identical to today until a
+folder finishes indexing, then transparently faster.
 
 #### Expected effect
 
-All-folder search: ~13s → a single indexed Postgres query. Single-folder search:
-~2.2s → the same. Search cost decouples from folder count and from RTT.
+All-folder subject/from/to search: ~13s → a single indexed Postgres query, decoupled
+from folder count and RTT. This is what unblocks making all-folder search the default.
+
+Single-folder search: improves by the removed `SELECT` + `SEARCH` round trips, but the
+2.20s baseline has **not been decomposed** into connection setup vs. search vs.
+rendering. Wave 1 may already absorb much of it. Re-measure on staging after Wave 1
+before assuming Wave 2's contribution here.
 
 ### Wave 3 — async send
 
