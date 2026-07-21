@@ -39,15 +39,40 @@ PHP-FPM request needing its own imapproxy backend connection — they cannot sha
 
 Serialize them: send one batch, wait for its response, then schedule the next.
 
-Roundcube fires a `responseafter<action>` event once a response has been processed, so the
-completion signal for our action is `responseafterplugin.avuz_prefetch`. Chain on that rather
-than on a timer.
+Roundcube fires a `responseafter<action>` event once a response has been processed
+(`program/js/app.js:9336`, `triggerEvent('responseafter' + response.action)`), so the completion
+signal should be `responseafterplugin.avuz_prefetch`.
 
-**Failure handling matters.** If the request errors, the event may not fire and the chain would
-stall for the life of the tab, silently disabling prefetch. Guard with a fallback timer that
-advances the chain if no response arrives within a bounded window, and treat a stalled batch's
-UIDs as un-sent so they remain retryable (the seen-map semantics from Wave 1 already support
-this — a UID is only marked seen once its batch is actually sent).
+**VERIFY THIS EMPIRICALLY BEFORE IMPLEMENTING — it is the riskiest assumption in the change.**
+The event name is built from `response.action`, a value the *server* puts in the JSON, and our
+action's response has not been inspected. If the name differs by even a character the chain never
+advances: batch 1 sends, nothing else ever does, and prefetch is silently dead for the tab — no
+error, no log, and the symptom surfaces weeks later as "the cache stopped working".
+
+Confirm in a browser console on staging before writing any chaining code:
+
+```js
+rcmail.addEventListener('responseafterplugin.avuz_prefetch', function(){ console.log('fired'); });
+```
+
+Trigger a prefetch and check it logs. If it does not, read the actual `action` value off the
+response and use that.
+
+**Failure handling.** Guard the chain with a fallback timer so a lost or errored response cannot
+stall it permanently, and treat a stalled batch's UIDs as un-sent so they stay retryable — the
+Wave 1 seen-map already supports this, since a UID is only marked seen once its batch is sent.
+
+**The timer must exceed the worst observed batch.** A cold batch took **69 seconds**. A timeout
+shorter than that would fire mid-flight and double-send, duplicating IMAP work — the opposite of
+the goal. Pick a value comfortably above the slowest cold batch measured on staging, not a
+convenient round number.
+
+**Coverage must not regress.** Serializing makes warming a full page take longer in wall-clock,
+so a user who navigates away mid-warm has fewer messages warmed *for that visit*. This is
+acceptable only because unsent UIDs are never marked seen and are re-queued on the next visit —
+coverage is deferred, not lost. **Verify this on staging:** count distinct warmed UIDs over a
+browsing session before and after. If total coverage drops rather than shifts later, the change
+is wrong as designed and should be reconsidered (e.g. two batches in flight rather than one).
 
 **Expected effect:** peak backend connections per user per page load drops from ~5 to ~2. This
 directly addresses the `cache_size 200` headroom problem: the Wave 1 plan's Step 6b estimated
@@ -69,7 +94,7 @@ against the user, not to stop prefetching.
 **Risk:** a permanently-busy UI would starve prefetch entirely. Bound the number of consecutive
 deferrals so prefetch eventually proceeds rather than never running.
 
-## Change 3 — give prefetched bodies their own Redis
+## Change 3 — stop bodies from being able to evict a session
 
 Measured on staging:
 
@@ -78,51 +103,108 @@ Measured on staging:
 | Prefetched bodies | 1,156 | 4.9 kB | ~5.7 MB |
 | PHP sessions | 8,403 | 720 B | ~6.1 MB |
 
-Bodies are ~4.9 kB each, not the ~180 kB assumed during review, and each warmed message costs
-roughly two body keys (~10 kB). Projecting:
+Bodies are ~4.9 kB each — not the ~180 kB assumed during review — and each warmed message costs
+roughly two body keys (~10 kB). At a 10-day TTL that projects to ~485 MB across 97 users plus
+~160 MB for the 16k mailbox, against a 512 MB ceiling.
 
-```
-97 users × ~500 warmed messages × 10 kB   ≈ 485 MB
-the 16k mailbox, browsed thoroughly       ≈ 160 MB   (one user)
-```
+**The failure mode, not the capacity, is what forces a change.** Bodies and sessions share one
+`allkeys-lru` keyspace. Redis evicts by recency and cannot tell a cached email from a login, so
+an evicted session is a silent logout — potentially mid-compose. Raising `maxmemory` moves the
+cliff without removing it.
 
-Against the current 512 MB ceiling, with a **10-day TTL** so bodies accumulate rather than turn
-over. Marginal today, worse as usage grows.
+**Two config changes, no new infrastructure:**
 
-**The failure mode is what forces this change.** Bodies and sessions share one `allkeys-lru`
-keyspace. Redis evicts by recency and cannot distinguish a cached email from a login. An evicted
-session is a silent logout, potentially mid-compose. Raising `maxmemory` moves the cliff; it does
-not remove it.
+1. **`session_storage = 'db'`** — move sessions to Postgres. They then cannot be evicted by
+   anything, ever. Postgres is already in the stack and already holds `cache_messages`.
+2. **`messages_cache_ttl` / body TTL 10 days → 5 days** — halves the accumulated working set,
+   so eviction pressure largely evaporates. Cost: a message untouched for 5 days re-warms once.
 
-Bodies are disposable — losing one costs a slow message open. Sessions are not. They must not
-share a memory pool.
+Bodies, `imap_cache` and everything else disposable stay on Redis under `allkeys-lru`, where
+eviction is harmless by definition.
 
-**A separate Redis database is not sufficient:** `maxmemory` is per-instance, so databases on the
-same instance still compete. This needs a second container.
+**Rejected: a second Redis instance for bodies.** Roundcube cannot express a per-cache host —
+`cache/redis.php:74` reads the global `redis_hosts` into a static singleton (`:118`) and
+`session/redis.php:45` reuses it — so the split would have to happen inside `avuz_prefetch` with
+a hand-rolled Redis client. That means reimplementing TTL handling, serialization, failure
+degradation, and the per-user key prefix (`rcube_cache` prefixes with the numeric user id,
+observed live as `7:avuz_body:ENGENHARIA:2427:1.1.1`). **Getting that prefix wrong would let one
+user read another's message bodies** — a data-disclosure bug class introduced to solve a capacity
+problem. Two config lines achieve the same isolation with none of that risk.
 
-**Roundcube cannot express this in config.** `cache/redis.php:74` reads the global `redis_hosts`
-into a **static** singleton (`:118`), and `session/redis.php:45` uses that same shared instance,
-so every cache and the session store necessarily share one connection. The split therefore has to
-happen inside `avuz_prefetch`, which opens its own connection instead of calling
-`rcmail::get_cache()`. The `redis` PHP extension is already present (`Dockerfile.base:12`).
+**Historical objection, checked:** sessions were deliberately moved OFF the database to Redis
+because HTML-signature images saved blank — a `database is locked` failure when session writes
+and cache writes contended on one SQLite file (`config.inc.php:64-68`). That was **SQLite-specific**.
+The database is Postgres as of 2026-07-20, which handles concurrent writers without whole-file
+locking. Verify on staging that signature-image upload still works before this ships to prod —
+it is the exact regression this change could resurrect.
 
-Design notes for that connection:
+## Change 4 — check whether PHP-FPM is the real bottleneck
 
-- Gate on an env var (e.g. `AVUZ_BODY_REDIS_HOST`). When unset, fall back to the current
-  `get_cache('avuz_body', …)` path so local development and any non-split deployment keep
-  working unchanged.
-- **Replicate the per-user key prefix.** `rcube_cache` prefixes keys with the numeric user id —
-  observed live as `7:avuz_body:ENGENHARIA:2427:1.1.1`. A hand-rolled client must include the
-  user id or users would read each other's cached message bodies. This is the single most
-  important detail in this change.
-- Reproduce the existing value handling: `setex` with the 10-day TTL, `serialize`/`unserialize`
-  for the mime-id list sentinel, plain strings for bodies.
-- Fail soft. If the body Redis is unreachable, prefetch and `serve_cached_body` must degrade to
-  live IMAP fetches, never error the request.
-- Size the new instance for bodies alone and keep `allkeys-lru` there — eviction of a body is
-  harmless, which is the entire point of separating it.
+Changes 1 and 2 coordinate one tab's prefetch against that tab's own foreground requests. The
+contention that actually matters is shared: imapproxy (`cache_size 200`) and PHP-FPM
+(`pm.max_children = 20`, `Dockerfile.base:18-30`) serve all 97 users. `rcmail.busy` knows nothing
+about the other 96 people, so no amount of per-tab politeness prevents twenty users' cold warms
+colliding.
 
-Sessions and `imap_cache` stay on the existing Redis, which then needs far less headroom.
+A prefetch request that occupies an FPM worker for 69 seconds is the concerning case: a handful
+of concurrent cold warms could exhaust 20 workers and stall **foreground** requests for everyone.
+
+This change is an investigation, not a predetermined fix. Measure under load:
+
+- FPM active workers and listen-queue depth during a multi-user cold-warm burst
+  (`pm.status_path`, or `SCRIPT_NAME=/status` via the FPM socket).
+- Whether foreground request latency degrades while prefetch is running for other users.
+
+If the queue backs up, raising `pm.max_children`, capping prefetch request duration, or bounding
+concurrent prefetch server-side would each be more direct than client-side pacing. Decide on the
+evidence rather than assuming.
+
+## How we measure success
+
+Wave 1's numbers came from clicking around with DevTools open and reading command counts out of
+`imap.log`. That worked for a one-off comparison but it is anecdotal, unrepeatable, and it cannot
+answer "is it better for the client this week than last week".
+
+**Instrument first, then change anything.** nginx already sits in front of every request and
+knows exactly how long each took. Add a timing log format capturing `$request_time` and
+`$upstream_response_time` alongside the request URI (which carries `_action`), then aggregate.
+
+That yields, continuously and without anyone opening DevTools:
+
+- p50 / p95 / p99 per action — `list`, `show`, `search`, `plugin.avuz_prefetch`, `refresh`
+- the distribution, not a single anecdotal click
+- before/after over the same real usage, not a staged test
+
+**Capture a baseline before implementing Wave 1.5.** Without it there is nothing to compare to,
+and we would be repeating Wave 1's mistake of measuring only after the fact.
+
+### The acceptance criterion
+
+Changes 1, 2 and 4 all aim at one thing, so state it directly:
+
+> **Foreground request latency must be independent of whether prefetch is running.**
+
+Concretely: p95 of `_action=list` and `_action=show` during a cold-warm burst should be
+statistically indistinguishable from p95 when prefetch is idle. Today it is not — a 69-second
+prefetch request competes for the same imapproxy connections and FPM workers.
+
+This is measurable, it is the actual user experience ("the app is slow while it's doing something
+in the background"), and it does not depend on anyone's subjective sense of speed.
+
+Secondary criteria:
+
+- **Coverage:** distinct warmed UIDs per browsing session must not drop (see Change 1).
+- **Sessions:** zero session losses. With sessions on Postgres this should be structurally
+  impossible; verify no unexpected logouts.
+- **Redis:** `evicted_keys` stays at 0 with the 5-day TTL and sessions moved off.
+
+### What this does not measure
+
+Perceived speed on a **first** visit to a folder is still bounded by the one-time warm, which
+Wave 1.5 deliberately does not shrink. If the client's remaining complaint turns out to be first
+visits specifically, the answer is reduced prefetch coverage or the deferred `BODYSTRUCTURE`
+work — not more pacing. Distinguishing the two is exactly what the per-action percentiles above
+let us do.
 
 ## Testing
 
@@ -157,3 +239,15 @@ Staging verification, against the Wave 1 baseline in the results doc:
   four-round-trip handshake. Real, but a separate concern from prefetch.
 - **Wave 2** (local search index) is unaffected — search was never touched by Wave 1, and
   all-folder search remains ~13s.
+
+## Sequencing decision
+
+Wave 1.5 ships **before** Wave 2, despite search being the client's most-cited complaint.
+
+The reasoning is frequency over severity: navigating between folders is far more common than
+searching, so a smaller improvement on the common path is worth more than waiting for a larger
+improvement on the rarer one. Search stays at ~13s in the meantime, and the all-folder-default
+the client asked for stays blocked until Wave 2 — that is the accepted cost.
+
+Recorded because it is a product judgement, not a technical one, and a future reader will
+otherwise wonder why the loudest complaint was not addressed first.
