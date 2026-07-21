@@ -8,7 +8,21 @@
   if (!window.rcmail) return;
 
   var BATCH = 8; // UIDs per background request (PHP caps at 10)
-  var seen = {};
+  // Persisted for the tab's lifetime: a reload or task switch must not re-queue
+  // UIDs we already warmed. Keys are already folder-scoped (mbox + ':' + uid).
+  var SEEN_KEY = 'avuz_prefetch_seen';
+  var seen = loadSeen();
+
+  function loadSeen() {
+    try { return JSON.parse(sessionStorage.getItem(SEEN_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+
+  function saveSeen() {
+    try { sessionStorage.setItem(SEEN_KEY, JSON.stringify(seen)); }
+    catch (e) { /* quota or private mode: in-memory only, no behavior change */ }
+  }
+
   var mbox = '';
 
   function pageUids() {
@@ -45,7 +59,6 @@
     mbox = rcmail.env.mailbox;
 
     var all = pageUids();
-    if (window.console) console.log('avuz_prefetch: page has', all.length, 'rows in', mbox);
 
     var uids = [];
     for (var i = 0; i < all.length; i++) {
@@ -54,7 +67,11 @@
       seen[key] = 1;
       uids.push(all[i]);
     }
-    sendBatches(uids);
+
+    if (uids.length) {
+      saveSeen();
+      sendBatches(uids);
+    }
   }
 
   var t;
