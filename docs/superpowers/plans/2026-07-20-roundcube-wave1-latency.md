@@ -714,6 +714,47 @@ curl -sk -H "X-API-Key: $PORTAINER_TOKEN" \
 
 Expected: `roundcube`, `imapproxy`, `redis`, `postgres`, `broker` all `running`.
 
+- [ ] **Step 2b: Mirror the Redis ceiling into Portainer by hand, and prove it took**
+
+**The Redis change in `deploy/stack.reference.yml` does NOT deploy itself.** That file is a
+reference copy — `scripts/deploy.sh:100-103` fetches the stack's *current* file from Portainer
+and re-sends it unchanged:
+
+```bash
+file="$(api_get "/api/stacks/$id/file" | jq -r '.StackFileContent')"
+  '{stackFileContent:$f, env:$e, prune:false, pullImage:true}')"
+curl -fsS "${CURL_OPTS[@]}" -X PUT \
+```
+
+So the git edit never reaches the running stack. Edit the `avuz-mail-roundcube-2` stack in the
+Portainer UI, change the redis service's command to
+`redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru`, and update the stack.
+
+(The imapproxy `cache_expiration_time` change is NOT affected — it is baked into the sidecar
+image by `COPY imapproxy.conf`, so `build-push.sh` plus `pullImage:true` delivers it.)
+
+Then prove the new ceiling is live before trusting any measurement:
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh avuz-mail-roundcube-2-redis-1 \
+  redis-cli CONFIG GET maxmemory
+```
+
+Expected: `536870912`. **If it still reads `134217728`, stop** — Step 6's eviction measurement
+would be reading the old 128mb ceiling and its conclusion would be worthless either way.
+
+- [ ] **Step 2c: Confirm imapproxy took the new expiration**
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh avuz-mail-roundcube-2-imapproxy-1 \
+  grep cache_expiration_time /etc/imapproxy.conf
+```
+
+Expected: `cache_expiration_time 1800`. If it still reads `60`, the sidecar image was not
+rebuilt or not repulled — re-run Step 1 and redeploy.
+
 - [ ] **Step 3: Record a log marker**
 
 ```bash
@@ -775,6 +816,41 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
 ```
 
 If `evicted_keys` is climbing, 512mb is still too low — raise it and note the new value in the results doc.
+
+- [ ] **Step 6b: Watch for Zoho connection blocks**
+
+`cache_expiration_time 60` was not an arbitrary default — the original imapproxy design
+(`docs/superpowers/plans/2026-06-30-roundcube-imapproxy.md:20,159`) chose it deliberately as a
+**Zoho connection-block guard**: *"short hold so warm idle sockets don't pile up against Zoho's
+concurrent-connection block"*, with a mandated staging check for block errors. Raising it to
+1800 reverses that choice, so the check it came with has to come back.
+
+The relevant limit is per **mailbox** (100 concurrent), not the global `cache_size 200`. A single
+user with a phone, a desktop client and several browser tabs now holds idle sockets 30x longer
+against their own account's ceiling.
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/logs.sh avuz-mail-roundcube-2-roundcube-1 errors grep "blocked|concurrent|too many"
+```
+
+Expected: no matches. **If "temporarily blocked for IMAP use" or a concurrent-limit error
+appears, lower `cache_expiration_time`** (try 600, then 300) and rebuild. Record the outcome in
+the results doc — this is the finding that decides whether 1800 ships to prod.
+
+Also sample how many connections the proxy is actually holding, so the `cache_size 200` headroom
+is measured rather than assumed:
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh avuz-mail-roundcube-2-imapproxy-1 \
+  sh -c 'ls -1 /proc/net/tcp >/dev/null 2>&1 && netstat -an 2>/dev/null | grep -c ":993.*ESTABLISHED" || echo "netstat unavailable"'
+```
+
+97 users at ~2 connections each is ~194 against a ceiling of 200 — roughly 3% headroom. At the
+old 60s expiration idle connections self-reaped between bursts; at 1800s they persist through
+normal gaps, so occupancy trends toward the full active population during business hours. If the
+sampled count approaches 200, raise `cache_size` or lower `cache_expiration_time`.
 
 - [ ] **Step 7: Verify `skip_deleted` hides no mail**
 
