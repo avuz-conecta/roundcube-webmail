@@ -2,16 +2,23 @@
 
 **Date**: 2026-06-30
 **Branch**: avuz-customization
-**Status**: ABANDONED (2026-07-01) — imapproxy implemented + deployed to staging,
-but up-imapproxy 1.2.8 **segfaults on the LOGIN command** under the modern
-musl/OpenSSL3 toolchain (the function-pointer UB the build's
-`-Wno-incompatible-pointer-types` silenced). Verified along the way: Zoho accepts
-the plaintext LOGIN command, and stunnel→Zoho works — the proxy binary itself is
-the broken link. Code reverted; **decision = escalation: relocate the Roundcube
-container to a US region near Zoho**, which removes the RTT root cause (every
-TLS/SELECT/FETCH round trip), a bigger win than the proxy's ~1s with none of the
-fragility. Relocation is an infra change tracked in avuz-server, not this repo.
-Docs kept as the investigation record.
+**Status**: DEPLOYED (superseded the 2026-07-01 ABANDONED call) — running in
+production as `avuz-mail-roundcube-imapproxy-1`, with `IMAP_USE_PROXY=1` on the
+roundcube container.
+
+The 2026-07-01 abandonment was correct for the build it tested: a hand-compiled
+Alpine/musl up-imapproxy 1.2.8 **segfaulted on the LOGIN command** (function-pointer
+UB that the build's `-Wno-incompatible-pointer-types` silenced). The fix was to stop
+compiling it — `docker/imapproxy-sidecar/` uses **Debian's official `imapproxy`
+package** on `debian:12-slim` (glibc), which does not exhibit the fault. Verified
+along the way and still true: Zoho accepts the plaintext LOGIN command, and
+stunnel→Zoho works.
+
+**US relocation was considered and explicitly rejected.** Moving the container next
+to Zoho would cut the Zoho RTT but push every *cached* read (Redis bodies,
+Postgres `messages_cache`, sessions) across the Atlantic to Brazilian users — a net
+loss, since cache hits are the common case and misses are the exception. The
+infrastructure stays in Brazil; latency is addressed in software instead.
 
 ---
 

@@ -12,10 +12,15 @@ services:
       - redis
       - broker
       - postgres
+      - imapproxy
     volumes:
       - roundcube_temp:/var/www/roundcube/temp
       - roundcube_logs:/var/www/roundcube/logs
     environment:
+      # IMAP_USE_PROXY=1 routes IMAP through the imapproxy sidecar (warm, cached
+      # connections to Zoho). Unset/0 = direct ssl://imap.zoho.com:993.
+      # See config/config.inc.php:11-34.
+      - IMAP_USE_PROXY=1
       - ROUNDCUBE_DB_DSN=pgsql://roundcube:${ROUNDCUBE_PG_PASSWORD}@postgres/roundcube
       - ROUNDCUBE_DES_KEY=$ROUNDCUBE_DES_KEY
       - ROUNDCUBE_SSO_SECRET=$ROUNDCUBE_SSO_SECRET
@@ -39,6 +44,16 @@ services:
       - ZOHO_TENANTS=$ZOHO_TENANTS
       - ZOHO_IMAP_HOST=imap.zoho.com
       - ZOHO_IMAP_PORT=993
+
+  # IMAP connection-caching proxy. Roundcube connects to imapproxy:143 (plaintext,
+  # internal network only); stunnel inside the container terminates TLS to
+  # imap.zoho.com:993. Eliminates the TCP+TLS handshake + LOGIN that PHP-FPM would
+  # otherwise repeat on every HTTP request. Built from docker/imapproxy-sidecar/
+  # by build-push.sh. See docs/superpowers/specs/2026-06-30-roundcube-latency-design.md.
+  imapproxy:
+    image: registry.avuz.app/admin/avuz-imapproxy-sidecar:staging
+    restart: unless-stopped
+    # NO ports — internal compose network only (prod publishes none either)
 
   redis:
     image: redis:7-alpine
