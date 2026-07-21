@@ -114,8 +114,16 @@ header across the **entire** message set, sorted in PHP. `set_sort_order()` does
 normalize `arrival` to index order, so `arrival` takes this path despite being
 equivalent to it.
 
-This affects **12 of 97 users**. It is a real defect but not the general cause, and
-the design treats it accordingly.
+This affects **12 of 97 users** — 11 on `arrival`, 1 on `date`. Notably `arrival` is
+semantically identical to IMAP index order, so those 11 pay the full fetch-and-sort
+cost for a result they would get for free by leaving the setting unset.
+
+It is a real defect but not the general cause. **Deferred to Wave 2**, which removes
+the cost for all users; see Wave 1 for the interim fixes considered and rejected.
+
+Users set this in the message-list Options popup
+(`skins/elastic/templates/mail.html:174-190`); it is persisted to
+`users.preferences` by `program/actions/mail/list.php:45-46`.
 
 ## Rejected alternatives
 
@@ -169,7 +177,6 @@ Reversible, no new services, no schema.
 | Redis ceiling | `deploy/stack.reference.yml:46` | `128mb` → `512mb` (starting value, see below) |
 | Filter pass off refresh | `plugins/avuz_filters/avuz_filters.php:22-24` | drop `refresh` hook; keep `login_after` + `new_messages` |
 | Response compression | `docker/nginx.conf` | add gzip for HTML/JS/CSS/JSON |
-| Sort normalization | one-off SQL migration over `users.preferences` | unset `message_sort_col` where it is `arrival` |
 
 `512mb` is a starting value, not a measured one. The correct figure depends on
 `evicted_keys` and body size under real load — measure with `redis-cli INFO stats`
@@ -181,13 +188,22 @@ The ceiling is `cache_size 200` concurrent cached connections; with 97 users thi
 within budget, but connection count against Zoho must be watched after rollout (see
 Open questions).
 
-Sort normalization: `arrival` is semantically identical to IMAP index order, so
-unsetting it avoids the `fetchHeaderIndex` path at zero behavioral cost. This is a
-one-off `UPDATE` over `users.preferences`, not a code change, and it fixes **11 of
-the 12** affected users. The single `date` user is left alone — remapping `date`
-would visibly change their sort order, and Wave 2 removes the cost anyway. Users can
-re-select `arrival` in the UI afterwards; if that proves common, revisit as a code
-change that normalizes on read.
+**The sort-column issue is deliberately not fixed here.** See "Narrow issue: the
+missing SORT capability" above — it affects 12 of 97 users, and Wave 2 removes the
+cost for everyone regardless. Three fixes were considered and all rejected as poor
+value for an interim window:
+
+- *One-off SQL* unsetting `message_sort_col` where it is `arrival` — fixes 11 users,
+  but any of them can re-select it in the UI and land back on the slow path.
+- *`dont_override`* — adding `message_sort_col` to `$config['dont_override']` hides
+  the control (`skins/elastic/templates/mail.html:176`) and blocks the save
+  (`program/actions/mail/list.php:45`), forcing the config default for everyone.
+  Config-only and durable, but strips sort-by-subject/from/size from all 97 users. A
+  UX regression to buy a perf win for 12.
+- *Code patch* normalizing `arrival` → `''` on save and read — correct and keeps every
+  sort option, but adds a core patch to carry across upstream rebases.
+
+Revisit only if Wave 2 slips.
 
 Expected effect: improves A, B, folder switch, and open. **Does not fix C.**
 
