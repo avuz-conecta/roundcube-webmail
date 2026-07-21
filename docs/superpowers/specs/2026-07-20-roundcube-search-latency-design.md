@@ -201,7 +201,6 @@ Reversible, no new services, no schema.
 |---|---|---|
 | Idle connection lifetime | `docker/imapproxy-sidecar/imapproxy.conf:8` | `60` → `1800` |
 | Redis ceiling | `deploy/stack.reference.yml:46` | `128mb` → `512mb` (starting value, see below) |
-| Filter pass off refresh | `plugins/avuz_filters/avuz_filters.php:22-24` | drop `refresh` hook; keep `login_after` + `new_messages` |
 | Response compression | `docker/nginx.conf` | add gzip for HTML/JS/CSS/JSON |
 
 `512mb` is a starting value, not a measured one. The correct figure depends on
@@ -210,9 +209,18 @@ before and after, and raise further if evictions persist. Splitting prefetched b
 onto a second Redis instance is the alternative if sizing proves hard to bound.
 
 `cache_expiration_time 1800` keeps a connection alive across normal reading pauses.
-The ceiling is `cache_size 200` concurrent cached connections; with 97 users this is
-within budget, but connection count against Zoho must be watched after rollout (see
-Open questions).
+Bounded by `cache_size 200`; at ~2 connections per user against Zoho's per-mailbox
+ceiling of 100 concurrent, this is safe by two orders of magnitude (see Zoho IMAP
+limits).
+
+**`avuz_filters` is deliberately left alone in Wave 1.** An earlier draft proposed
+dropping the `refresh` hook, keeping `login_after` + `new_messages`. That would break
+filtering: `plugins/avuz_filters/avuz_filters.php:18-21` documents that
+`new_messages` "only fires when check_recent detects a status diff (not always), so we
+use 'refresh' as the primary trigger". The real defect is that the pass runs
+unconditionally every 60s whether or not anything arrived — fixed properly in Wave 2
+by gating it on the `LIST-STATUS` result, which that wave introduces anyway. A filter
+pass then costs nothing when no mail arrived, which is most refreshes.
 
 **The sort-column issue is deliberately not fixed here.** See "Narrow issue: the
 missing SORT capability" above — it affects 12 of 97 users, and Wave 2 removes the
@@ -354,6 +362,18 @@ background, not on the interactive path.
 **UIDVALIDITY change** invalidates a folder wholesale: drop all rows for that
 `(user_id, folder)` and re-index.
 
+**Gate the `avuz_filters` pass on the same `LIST-STATUS` result.** It currently runs a
+1000-message INBOX scan every 60s regardless of whether mail arrived. Once the sync
+layer knows INBOX's `HIGHESTMODSEQ`/`UIDNEXT`, the filter pass runs only when
+something actually changed — free on most refreshes, and without removing the
+`refresh` hook that it depends on for reliable triggering.
+
+**Rollout sequencing.** Waves 1 and 2 ship together; Wave 3 follows separately, since
+it is the only one introducing a new failure mode. Deploy to staging incrementally
+(Wave 1, measure A/B/C, then Wave 2, measure again) so regressions and gains can be
+attributed to a specific change — the single client-facing release is a separate
+decision from how staging is exercised.
+
 #### Correctness rule
 
 Fall back to IMAP search for the **whole query** when any of these hold:
@@ -410,13 +430,34 @@ implementation):
 
 These are cheap to test and are resolved during Wave 1/2 rather than assumed:
 
-1. **Zoho's per-account IMAP connection limit.** Gates how aggressively the syncer may
-   run, and interacts with raising `cache_expiration_time`. Documented as 100
-   concurrent connections per account; verify against real behavior.
-2. **Whether Zoho auto-files SMTP-sent mail into Sent.** Affects Wave 3 dedup, and
+1. **Whether Zoho auto-files SMTP-sent mail into Sent.** Affects Wave 3 dedup, and
    whether the index would double-count sent messages.
-3. **Folder count distribution across the 97 users.** Determines who currently suffers
+2. **Folder count distribution across the 97 users.** Determines who currently suffers
    worst on multi-folder search and who benefits most from Wave 2.
+
+## Zoho IMAP limits (verified)
+
+From [Zoho's rates and limits](https://www.zoho.com/mail/help/adminconsole/rates-and-limits.html):
+
+| Limit | Value | Scope |
+|---|---|---|
+| IMAP connections | 100 concurrent | per mailbox |
+| IMAP data transfer | 1 GB / 15 min (org), 250 MB / 15 min (personal) | per account |
+| POP connections | 5 concurrent | per mailbox |
+
+**Connections are not a constraint.** imapproxy holds roughly 2 per user against a
+per-mailbox ceiling of 100, so `cache_expiration_time 1800` is well within budget.
+
+**Data transfer is the real constraint, and enforcement is harsh** — Zoho blocks the
+account ("temporarily blocked for IMAP use") rather than degrading gracefully.
+
+This is a third, independent argument for headers-only indexing: the 16k-message
+backfill is ~5 MB, about 0.5% of the 15-minute window, whereas body indexing for the
+same account would be several GB and would reliably trip the cap and lock the user out
+of IMAP. Body indexing is not a storage tradeoff — it is unsafe.
+
+**Syncer requirements that follow:** throttle backfill to stay well inside the window,
+and treat an IMAP block as a stop-and-back-off condition. Never retry into a block.
 
 ## Out of scope
 
