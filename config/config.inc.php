@@ -40,8 +40,19 @@ $config['imap_timeout'] = 15;
 // UID SEARCH ALL — ~16,000 individual UIDs per message-list request on our
 // largest mailbox. skip_deleted=true makes the criteria 'UNDELETED', which
 // enables UID SEARCH RETURN (ALL) and compact ranges.
-// Safe on Zoho: deletions move to Lixeira rather than being flagged \Deleted
-// in place. Verified in Task 6.
+// Premise: Zoho moves deletions to Lixeira rather than flagging \Deleted in
+// place, so nothing should disappear. NOT YET VERIFIED against a live mailbox.
+//
+// RISK: this hides ANY message flagged \Deleted, whatever set the flag — not
+// just Zoho's own delete path. A phone or desktop IMAP client that flags and
+// defers the expunge (standard Apple Mail behavior) would make that message
+// vanish from Roundcube's list, counts, badges AND search, while remaining
+// visible everywhere else. Revert this line immediately if that is observed.
+//
+// Also note countmessages() (rcube_imap.php:758) switches UNSEEN counting from
+// a cheap STATUS to a live SEARCH. Bounded to INBOX while check_all_folders is
+// false. The ALL count is cached and reused by index_direct() (:1502), so the
+// message-list path still nets out to one ESEARCH instead of UID SEARCH ALL.
 $config['skip_deleted'] = true;
 
 // -- SMTP (Zoho) --

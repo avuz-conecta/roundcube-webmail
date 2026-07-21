@@ -778,7 +778,23 @@ If `evicted_keys` is climbing, 512mb is still too low — raise it and note the 
 
 - [ ] **Step 7: Verify `skip_deleted` hides no mail**
 
-In the staging UI, confirm total message counts per folder match what they were before the change, and that no message visible before deployment has disappeared. Zoho moves deletions to Lixeira rather than flagging `\Deleted` in place, so the expected result is no change at all. **If any message is missing, revert `skip_deleted` immediately** — it is a one-line config change and correctness outranks the ESEARCH win.
+Two checks, not one. The second is the important one.
+
+**7a — before/after comparison.** In the staging UI, confirm total message counts per folder match what they were before the change, and that no message visible before deployment has disappeared.
+
+**7b — stray `\Deleted` flag.** The premise behind `skip_deleted` is that Zoho moves deletions to Lixeira rather than flagging in place. That premise covers Zoho's *own* UI, not other clients. `skip_deleted` hides any message carrying the flag, whatever set it — and a phone or desktop client that flags then defers the expunge (standard Apple Mail behavior) would make a message vanish from Roundcube's list, counts, badges **and search** while staying visible everywhere else.
+
+Test it directly. Against the staging mailbox, flag a message `\Deleted` without expunging:
+
+```
+A1 LOGIN <user> <pass>
+A2 SELECT INBOX
+A3 UID STORE <uid> +FLAGS (\Deleted)
+```
+
+Then, in Roundcube: reload the folder and confirm whether that message is still listed, still counted in the folder total, still in the unread badge if it was unread, and still findable by searching its subject. Clear the flag afterwards with `UID STORE <uid> -FLAGS (\Deleted)`.
+
+**If the message disappears from any of those, revert `skip_deleted` immediately** — it is a one-line config change and correctness outranks the ESEARCH win. Record the outcome in the results doc either way; this is the finding that decides whether the setting ships to prod.
 
 - [ ] **Step 8: Verify prefetch still warms correctly**
 
