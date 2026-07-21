@@ -10,6 +10,9 @@
 # and normal permission rules apply.
 set -uo pipefail
 
+# Fails OPEN (exit 0, no opinion) if jq is missing or stdin is malformed, so a
+# broken environment cannot block every Bash call. The normal permission rules
+# still apply in that case — this hook only ever ADDS prompts, never removes them.
 cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 
 # Anything that talks to Portainer, deploys, publishes an image, pushes commits,
@@ -24,6 +27,16 @@ gate_pattern+='|docker[[:space:]]+buildx|gh[[:space:]]+(pr|release|api[[:space:]
 gate_pattern+='|(^|[;&|[:space:]])(sudo|rm|mv|chown|tee|dd)[[:space:]]'
 gate_pattern+='|curl[[:space:]].*(-o|-O|--output)[[:space:]]'
 gate_pattern+='|>[[:space:]]*/(etc|usr|bin|sbin|var|opt|Library|System)/'
+# Self-escalation guard: the read-only allowlist (echo/printf/awk/find/sed -n)
+# combined with a redirect could rewrite this hook or the permission rules that
+# invoke it. Gate any write aimed at .claude/, and the write-capable flags of
+# otherwise-read-only tools.
+gate_pattern+='|>[[:space:]]*[^[:space:];&|]*\.claude/'
+gate_pattern+='|(tee|cp|ln)[[:space:]]+[^;&|]*\.claude/'
+gate_pattern+='|find[[:space:]]+[^;&|]*(-delete|-exec|-execdir|-ok)'
+gate_pattern+='|awk[[:space:]]+[^;&|]*(print|printf)[^;&|]*>'
+gate_pattern+='|awk[[:space:]]+[^;&|]*(system\(|close\()'
+gate_pattern+='|sed[[:space:]]+[^;&|]*[^a-zA-Z]w[[:space:]]+[^[:space:]]'
 
 if printf '%s' "$cmd" | grep -qE "$gate_pattern"; then
   printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Reaches deployed infrastructure, publishes, or mutates a container - explicit approval required."}}'
