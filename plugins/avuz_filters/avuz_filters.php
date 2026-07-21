@@ -36,6 +36,13 @@ class avuz_filters extends rcube_plugin
 
     function on_login($args)
     {
+        // login_after can share a request with refresh/new_messages (e.g. a
+        // login that immediately triggers a check-recent); claim the same
+        // token so the pass still runs only once.
+        if (!avuz_run_guard::claim('filters')) {
+            return $args;
+        }
+
         avuz_filter_runner::run(rcmail::get_instance(), false);
         return $args;
     }

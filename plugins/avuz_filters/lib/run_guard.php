@@ -9,7 +9,14 @@
  * 'new_messages' fires only when check_recent detects a status diff, so
  * 'refresh' is the reliable trigger and 'new_messages' the timely one.
  *
- * State is per PHP process, which for PHP-FPM means per HTTP request.
+ * State is per PHP process — but note FPM *reuses* that OS process across many
+ * requests, so it's not the process boundary that resets this. What resets it
+ * is that PHP tears down and rebuilds all userland state (including class
+ * statics like $claimed) at the end of every request, so in practice this
+ * still ends up scoped to one HTTP request under FPM. Do not port this
+ * reasoning to a persistent runtime (Swoole, RoadRunner, etc.) where userland
+ * state — and this static — would survive across requests and need an
+ * explicit reset per request instead.
  */
 class avuz_run_guard
 {
