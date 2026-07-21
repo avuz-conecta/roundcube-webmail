@@ -34,6 +34,16 @@ if ($useProxy) {
 }
 $config['imap_timeout'] = 15;
 
+// Zoho advertises ESEARCH but rcube_imap_generic::search() only requests it when
+// the criteria string contains a non-digit. With skip_deleted=false the criteria
+// for an unfiltered index query is empty, so Roundcube falls back to plain
+// UID SEARCH ALL — ~16,000 individual UIDs per message-list request on our
+// largest mailbox. skip_deleted=true makes the criteria 'UNDELETED', which
+// enables UID SEARCH RETURN (ALL) and compact ranges.
+// Safe on Zoho: deletions move to Lixeira rather than being flagged \Deleted
+// in place. Verified in Task 6.
+$config['skip_deleted'] = true;
+
 // -- SMTP (Zoho) --
 $config['smtp_server'] = 'tls://smtp.zoho.com';
 $config['smtp_port'] = 587;
