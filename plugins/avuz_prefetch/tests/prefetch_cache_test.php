@@ -42,6 +42,25 @@ class prefetch_cache_test extends TestCase
         $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
     }
 
+    function testProbesLastMimeIdNotFirst() {
+        // multipart/alternative: mime_parts (and so the sentinel list) puts
+        // text/plain ('1.1') before text/html ('1.2'). Only the html body is
+        // still cached; probing the first entry would wrongly report cold.
+        $cache = new fake_cache();
+        $cache->set(avuz_prefetch_cache::body_key('INBOX', 941, '1.2'), '<p>hi</p>');
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1', '1.2']);
+        $this->assertTrue(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+    }
+
+    function testNotWarmWhenLastMimeIdBodyWasEvicted() {
+        // Inverse: the first (plain) body survived but the last (html) body,
+        // the one that matters, was evicted — this must report cold.
+        $cache = new fake_cache();
+        $cache->set(avuz_prefetch_cache::body_key('INBOX', 941, '1.1'), 'hi');
+        avuz_prefetch_cache::mark_warm($cache, 'INBOX', 941, ['1.1', '1.2']);
+        $this->assertFalse(avuz_prefetch_cache::is_warm($cache, 'INBOX', 941));
+    }
+
     function testNotWarmForLegacyPlainOneSentinel() {
         $cache = new fake_cache();
         // Pre-fix code wrote the literal string '1' as the sentinel value.

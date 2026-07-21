@@ -13,8 +13,14 @@
  * can outlive the bodies it vouches for: eviction is size-driven, and a ~30 byte
  * sentinel is far less likely to be reclaimed than the ~180 kB bodies next to it.
  * So the sentinel's VALUE is the list of mime-ids it actually cached, and
- * is_warm() confirms the first of those body keys is still present before
- * trusting it — one extra Redis GET, zero IMAP round trips.
+ * is_warm() confirms the LAST of those body keys is still present before
+ * trusting it. In a multipart/alternative, mime_parts (and so this list) puts
+ * text/plain before text/html, so the last entry is the html part Roundcube
+ * actually renders — the one worth verifying.
+ *
+ * This costs one extra Redis fetch, not one cheap GET: rcube_cache has no
+ * exists(), so read_record() pulls and unserializes the whole cached value.
+ * Still zero IMAP round trips, which is what matters at 198ms RTT to Zoho.
  */
 class avuz_prefetch_cache
 {
@@ -49,7 +55,8 @@ class avuz_prefetch_cache
             return false;
         }
 
-        $body = $cache->get(self::body_key($folder, $uid, $mimeIds[0]));
+        $lastMimeId = $mimeIds[count($mimeIds) - 1];
+        $body = $cache->get(self::body_key($folder, $uid, $lastMimeId));
         return is_string($body) && $body !== '';
     }
 

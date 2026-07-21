@@ -2,7 +2,8 @@
  * avuz_prefetch — warm every message body (+ inline images) on the current list
  * page in throttled background batches, so any click on the page serves from cache
  * instead of a fresh remote IMAP fetch. Bounded by mail_pagesize (set to 30).
- * Re-runs on page change; seen{} dedupes.
+ * Re-runs on page change; seen{} dedupes for an hour, then expires so an
+ * evicted-and-server-rewarmed body gets a fresh POST too.
  */
 (function () {
   if (!window.rcmail) return;
@@ -10,7 +11,13 @@
   var BATCH = 8; // UIDs per background request (PHP caps at 10)
   // Persisted for the tab's lifetime: a reload or task switch must not re-queue
   // UIDs we already warmed. Keys are already folder-scoped (mbox + ':' + uid).
+  // Values are the ms timestamp a UID's batch was sent, not a plain flag: the
+  // server sentinel re-warms an evicted body, but that logic is never reached
+  // if the client gate here still says seen, so entries expire and get
+  // re-queued (see isSeen). A legacy plain `1` (written by pre-fix code) is
+  // treated as expired too, so it self-heals on the next pass.
   var SEEN_KEY = 'avuz_prefetch_seen';
+  var SEEN_TTL_MS = 60 * 60 * 1000; // 1 hour — well under the 10-day body TTL
   var seen = loadSeen();
 
   function loadSeen() {
@@ -23,7 +30,20 @@
     catch (e) { /* quota or private mode: in-memory only, no behavior change */ }
   }
 
+  function isSeen(key) {
+    var sentAt = seen[key];
+    if (!sentAt || sentAt === 1) return false; // never sent, or legacy `1` sentinel
+    return (Date.now() - sentAt) < SEEN_TTL_MS;
+  }
+
   var mbox = '';
+  // UIDs queued (module-scoped key mbox+':'+uid) but not yet POSTed. Guards
+  // against a listupdate firing while sendBatches is still dribbling out
+  // earlier batches — without this, the same not-yet-sent UIDs get collected
+  // and POSTed a second time. Cleared per-UID the moment its batch is sent,
+  // at which point it enters `seen` instead. Never persisted: if the tab dies
+  // mid-dribble the UID was never sent, so it must stay retryable (Finding B).
+  var inFlight = {};
 
   function pageUids() {
     // Roundcube base64-encodes the uid in the row DOM id, so read the real uid
@@ -42,20 +62,30 @@
     else window.setTimeout(fn, 200);
   }
 
-  // uids is only the not-yet-seen set for this page pass (dedup already applied
-  // by the caller). Marking + persisting happens per batch, AFTER it is actually
-  // POSTed — a reload/nav that kills batches 2-4 must not claim them as seen,
-  // otherwise (with the server sentinel fixed to require live bodies) nothing
-  // would ever retry them.
+  // uids is only the not-yet-seen, not-already-inFlight set for this page pass
+  // (dedup applied by the caller). Marking + persisting happens per batch,
+  // AFTER it is actually POSTed — a reload/nav that kills batches 2-4 must not
+  // claim them as seen, otherwise (with the server sentinel fixed to require
+  // live bodies) nothing would ever retry them.
+  //
+  // The folder is captured ONCE here, not read from module-level `mbox` per
+  // tick: sendBatches dribbles one batch per idle slot, so a folder switch
+  // mid-dribble must not relabel a still-inflight INBOX closure's remaining
+  // batches under the new folder (wrong _mbox POSTed, wrong UIDs marked seen).
   function sendBatches(uids) {
     if (!uids.length) return;
+    var m = mbox;
     var i = 0;
     (function next() {
       if (i >= uids.length) return;
       var batch = uids.slice(i, i + BATCH);
       i += BATCH;
-      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: mbox });
-      for (var j = 0; j < batch.length; j++) seen[mbox + ':' + batch[j]] = 1;
+      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: m });
+      for (var j = 0; j < batch.length; j++) {
+        var key = m + ':' + batch[j];
+        seen[key] = Date.now();
+        delete inFlight[key];
+      }
       saveSeen();
       idle(next); // one batch per idle slot — don't flood Zoho or block the click
     })();
@@ -67,15 +97,14 @@
 
     var all = pageUids();
 
-    // In-loop dedupe only, keyed on a local set — not written to seen{} until
-    // each batch is actually sent (see sendBatches), so the same UID is never
-    // queued twice within this pass without prematurely claiming it as warmed.
-    var queued = {};
+    // Skip anything still fresh in `seen` or already queued by a dribble that
+    // hasn't finished sending (inFlight) — the latter also serves as this
+    // pass's own in-loop dedupe, since it's marked immediately below.
     var uids = [];
     for (var i = 0; i < all.length; i++) {
       var key = mbox + ':' + all[i];
-      if (seen[key] || queued[key]) continue;
-      queued[key] = 1;
+      if (isSeen(key) || inFlight[key]) continue;
+      inFlight[key] = 1;
       uids.push(all[i]);
     }
 
