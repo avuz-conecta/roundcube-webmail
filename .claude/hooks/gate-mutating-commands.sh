@@ -19,6 +19,11 @@ gate_pattern+='|git[[:space:]]+push|docker[[:space:]]+(exec|run|rm|push|kill|sto
 # Flags may sit between `compose` and the subcommand: docker compose -f x.yml up -d
 gate_pattern+='|docker[[:space:]]+compose[[:space:]]+(.*[[:space:]])?(up|down|restart|stop|start)([[:space:]]|$)'
 gate_pattern+='|docker[[:space:]]+buildx|gh[[:space:]]+(pr|release|api[[:space:]]+.*-X[[:space:]]*(POST|PUT|PATCH|DELETE))'
+# Read-only tools are allowlisted with prefix rules, which cannot see a `>`
+# redirect or a destructive verb later in the pipeline. Catch those here.
+gate_pattern+='|(^|[;&|[:space:]])(sudo|rm|mv|chown|tee|dd)[[:space:]]'
+gate_pattern+='|curl[[:space:]].*(-o|-O|--output)[[:space:]]'
+gate_pattern+='|>[[:space:]]*/(etc|usr|bin|sbin|var|opt|Library|System)/'
 
 if printf '%s' "$cmd" | grep -qE "$gate_pattern"; then
   printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"Reaches deployed infrastructure, publishes, or mutates a container - explicit approval required."}}'
