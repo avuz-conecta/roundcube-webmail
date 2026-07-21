@@ -55,7 +55,11 @@ class avuz_prefetch_cache
             return false;
         }
 
-        $lastMimeId = $mimeIds[count($mimeIds) - 1];
+        // end() rather than [count()-1]: the list survives a serialize round-trip
+        // through Redis, and mark_warm() has no way to guarantee its caller passed
+        // a sequential 0-indexed array. A gap in the keys would otherwise read as
+        // "not warm" forever and re-fetch every message on every page.
+        $lastMimeId = end($mimeIds);
         $body = $cache->get(self::body_key($folder, $uid, $lastMimeId));
         return is_string($body) && $body !== '';
     }
