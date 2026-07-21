@@ -1,4 +1,4 @@
-# Roundcube Wave 1.5 — Prefetch Pacing & Cache Isolation
+# Roundcube Wave 1.5 — Prefetch Pacing & Cache Sizing
 
 **Date**: 2026-07-21
 **Branch**: avuz-customization
@@ -94,7 +94,7 @@ against the user, not to stop prefetching.
 **Risk:** a permanently-busy UI would starve prefetch entirely. Bound the number of consecutive
 deferrals so prefetch eventually proceeds rather than never running.
 
-## Change 3 — stop bodies from being able to evict a session
+## Change 3 — keep memory below the ceiling so nothing evicts a session
 
 Measured on staging:
 
@@ -107,36 +107,57 @@ Bodies are ~4.9 kB each — not the ~180 kB assumed during review — and each w
 roughly two body keys (~10 kB). At a 10-day TTL that projects to ~485 MB across 97 users plus
 ~160 MB for the 16k mailbox, against a 512 MB ceiling.
 
-**The failure mode, not the capacity, is what forces a change.** Bodies and sessions share one
-`allkeys-lru` keyspace. Redis evicts by recency and cannot tell a cached email from a login, so
-an evicted session is a silent logout — potentially mid-compose. Raising `maxmemory` moves the
-cliff without removing it.
+**The failure mode, not the capacity, is what makes this worth addressing.** Bodies and sessions
+share one `allkeys-lru` keyspace. Redis evicts by recency and cannot tell a cached email from a
+login, so an evicted session is a silent logout — potentially mid-compose. The goal is to keep
+eviction from ever triggering.
 
-**Two config changes, no new infrastructure:**
+First, separate two mechanisms that are easy to conflate:
 
-1. **`session_storage = 'db'`** — move sessions to Postgres. They then cannot be evicted by
-   anything, ever. Postgres is already in the stack and already holds `cache_messages`.
-2. **`messages_cache_ttl` / body TTL 10 days → 5 days** — halves the accumulated working set,
-   so eviction pressure largely evaporates. Cost: a message untouched for 5 days re-warms once.
+- **TTL is per-key expiry.** A body's 5-day TTL only ever removes that body. It can never remove
+  a session — they are independent clocks. Sessions expire on their own `session_lifetime`
+  (7 days), refreshed on every use, so an active user never hits it.
+- **Eviction is memory pressure.** When Redis reaches `maxmemory`, `allkeys-lru` discards the
+  least-recently-used key *regardless of remaining TTL*, and it cannot tell a session from a
+  body. This — not any TTL — is the silent-logout path.
 
-Bodies, `imap_cache` and everything else disposable stay on Redis under `allkeys-lru`, where
-eviction is harmless by definition.
+So the fix is to keep `used_memory` below `maxmemory`, which makes `allkeys-lru` never fire.
 
-**Rejected: a second Redis instance for bodies.** Roundcube cannot express a per-cache host —
-`cache/redis.php:74` reads the global `redis_hosts` into a static singleton (`:118`) and
-`session/redis.php:45` reuses it — so the split would have to happen inside `avuz_prefetch` with
-a hand-rolled Redis client. That means reimplementing TTL handling, serialization, failure
-degradation, and the per-user key prefix (`rcube_cache` prefixes with the numeric user id,
-observed live as `7:avuz_body:ENGENHARIA:2427:1.1.1`). **Getting that prefix wrong would let one
-user read another's message bodies** — a data-disclosure bug class introduced to solve a capacity
-problem. Two config lines achieve the same isolation with none of that risk.
+**This wave — one config change:**
 
-**Historical objection, checked:** sessions were deliberately moved OFF the database to Redis
-because HTML-signature images saved blank — a `database is locked` failure when session writes
-and cache writes contended on one SQLite file (`config.inc.php:64-68`). That was **SQLite-specific**.
-The database is Postgres as of 2026-07-20, which handles concurrent writers without whole-file
-locking. Verify on staging that signature-image upload still works before this ships to prod —
-it is the exact regression this change could resurrect.
+- **body TTL 10 days → 5 days.** Halves the accumulated working set. Projection drops from
+  ~485 MB + ~160 MB ≈ 645 MB (over the 512 MB ceiling) to ~240 MB + ~80 MB ≈ 320 MB —
+  comfortably under 512 MB. Cost: a message untouched for 5 days re-warms once on next open.
+
+Sessions stay on Redis. With the working set at ~320 MB against 512 MB, memory never approaches
+the ceiling, so eviction never triggers, so sessions are never at risk. If growth ever pushes
+memory up, `maxmemory` can be raised — the host has RAM headroom, and this is the chosen lever.
+
+**Explicitly deferred: moving sessions to Postgres (`session_storage = 'db'`).** This would make
+session loss *structurally* impossible rather than merely improbable — bodies could grow without
+bound and still never evict a session. It is deferred, not rejected, because keeping memory below
+the ceiling is a cheaper mitigation for the current scale and the host has RAM to raise the
+ceiling if needed.
+
+The distinction that matters for a future reader: **raising `maxmemory` is an operational
+commitment, not a structural guarantee.** It holds only while someone keeps the ceiling ahead of
+the working set. The day that assumption breaks — user count climbs, the body TTL creeps back up,
+or the ceiling is trimmed — `allkeys-lru` resumes evicting sessions and the failure is a silent
+mid-compose logout with no error. **Trigger to revisit the Postgres move:** Redis `used_memory`
+sustained above ~70% of `maxmemory`, or any observed session eviction (`evicted_keys > 0` on the
+session keyspace). At that point the structural fix is worth its few-ms-per-request cost.
+
+(Postgres session writes are plain MVCC inserts — `session/db.php` `write()` has no `FOR UPDATE`
+and no explicit transaction — so the old blank-signature bug cannot recur. That bug was SQLite's
+whole-file lock, `config.inc.php:64-68`, a mechanism Postgres does not have. Noted so the deferred
+option is not mistaken for reverting a bugfix.)
+
+**Also rejected: a second Redis instance for bodies.** Roundcube cannot express a per-cache host
+— `cache/redis.php:74` reads the global `redis_hosts` into a static singleton (`:118`) and
+`session/redis.php:45` reuses it — so the split would need a hand-rolled Redis client inside
+`avuz_prefetch`, reimplementing TTL, serialization, failure degradation, and the per-user key
+prefix (`7:avuz_body:ENGENHARIA:2427:1.1.1`). Getting that prefix wrong would let one user read
+another's message bodies. Not worth it when a TTL change solves the same problem.
 
 ## Change 4 — check whether PHP-FPM is the real bottleneck
 
@@ -194,9 +215,11 @@ in the background"), and it does not depend on anyone's subjective sense of spee
 Secondary criteria:
 
 - **Coverage:** distinct warmed UIDs per browsing session must not drop (see Change 1).
-- **Sessions:** zero session losses. With sessions on Postgres this should be structurally
-  impossible; verify no unexpected logouts.
-- **Redis:** `evicted_keys` stays at 0 with the 5-day TTL and sessions moved off.
+- **Sessions:** zero session losses. With the working set at ~320 MB against a 512 MB ceiling,
+  `used_memory` should stay well clear and `allkeys-lru` should never fire; verify no unexpected
+  logouts and that `evicted_keys` stays 0.
+- **Redis:** `evicted_keys` stays at 0 with the 5-day TTL; `used_memory` stays under ~70% of
+  `maxmemory` (the trigger for revisiting the Postgres session move).
 
 ### What this does not measure
 
