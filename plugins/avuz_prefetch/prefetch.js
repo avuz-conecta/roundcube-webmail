@@ -42,6 +42,11 @@
     else window.setTimeout(fn, 200);
   }
 
+  // uids is only the not-yet-seen set for this page pass (dedup already applied
+  // by the caller). Marking + persisting happens per batch, AFTER it is actually
+  // POSTed — a reload/nav that kills batches 2-4 must not claim them as seen,
+  // otherwise (with the server sentinel fixed to require live bodies) nothing
+  // would ever retry them.
   function sendBatches(uids) {
     if (!uids.length) return;
     var i = 0;
@@ -50,6 +55,8 @@
       var batch = uids.slice(i, i + BATCH);
       i += BATCH;
       rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: mbox });
+      for (var j = 0; j < batch.length; j++) seen[mbox + ':' + batch[j]] = 1;
+      saveSeen();
       idle(next); // one batch per idle slot — don't flood Zoho or block the click
     })();
   }
@@ -60,16 +67,19 @@
 
     var all = pageUids();
 
+    // In-loop dedupe only, keyed on a local set — not written to seen{} until
+    // each batch is actually sent (see sendBatches), so the same UID is never
+    // queued twice within this pass without prematurely claiming it as warmed.
+    var queued = {};
     var uids = [];
     for (var i = 0; i < all.length; i++) {
       var key = mbox + ':' + all[i];
-      if (seen[key]) continue;
-      seen[key] = 1;
+      if (seen[key] || queued[key]) continue;
+      queued[key] = 1;
       uids.push(all[i]);
     }
 
     if (uids.length) {
-      saveSeen();
       sendBatches(uids);
     }
   }
