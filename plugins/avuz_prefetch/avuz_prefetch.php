@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/lib/prefetch_cache.php';
+
 /**
  * avuz_prefetch — instant message opens against a remote IMAP (Zoho).
  *
@@ -42,7 +44,7 @@ class avuz_prefetch extends rcube_plugin
 
     private function key($folder, $uid, $mimeId)
     {
-        return $folder . ':' . $uid . ':' . $mimeId;
+        return avuz_prefetch_cache::body_key($folder, $uid, $mimeId);
     }
 
     private function is_text($part)
@@ -86,10 +88,17 @@ class avuz_prefetch extends rcube_plugin
 
         $cache = $this->cache();
         $list  = array_slice(array_filter(explode(',', $uids), 'strlen'), 0, self::MAX_UIDS);
+        $folder = $mbox !== null ? $mbox : $rcmail->storage->get_folder();
 
         foreach ($list as $rawUid) {
             $uid = (int) $rawUid;
             if ($uid <= 0) {
+                continue;
+            }
+
+            // Already warmed on an earlier run: skip before building rcube_message,
+            // which would cost a BODYSTRUCTURE fetch plus per-level MIME header fetches.
+            if (avuz_prefetch_cache::is_warm($cache, (string) $folder, $uid)) {
                 continue;
             }
 
@@ -110,6 +119,8 @@ class avuz_prefetch extends rcube_plugin
                         $cache->set($this->key($message->folder, $uid, $mimeId), $body);
                     }
                 }
+
+                avuz_prefetch_cache::mark_warm($cache, $folder, $uid);
             } catch (Throwable $e) {
                 rcube::raise_error("avuz_prefetch uid {$uid}: " . $e->getMessage(), true, false);
             }
