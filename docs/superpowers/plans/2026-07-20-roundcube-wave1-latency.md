@@ -805,7 +805,46 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
 
 Replace `<MARKER_LINE>` with the line count from Step 3 plus one.
 
-Before: `_action=list` requests reached **84 commands / 6s**; `plugin.avuz_prefetch` reached **54 commands / 3s**. Expect both to drop sharply on the second and later visits to a folder, since Task 1 skips warmed messages.
+Before: `_action=list` requests reached **84 commands / 6s**; `plugin.avuz_prefetch` reached **54 commands / 3s**.
+
+**Split first visit from second visit — they are different numbers and conflating them will
+misread the result.** Wave 1 does NOT improve the first warm of a folder: that still costs the
+same ~70 round trips per batch of 10, and at `mail_pagesize = 30` a first visit is ~210 round
+trips of background IMAP. What Wave 1 removes is the *repeat* traffic. So record separately:
+
+| | Expectation |
+|---|---|
+| First visit to a folder this session | roughly unchanged from baseline |
+| Second and later visits, same tab | should drop sharply — this is the win |
+| After a page reload, same folder | should now also stay low (Task 2 persists the seen map) |
+
+If second visits have NOT dropped, Task 1's sentinel is not being read — check for the poisoned-
+sentinel case in Step 6c before concluding anything else.
+
+- [ ] **Step 5b: Check whether `skip_deleted` added a command to the warm list path**
+
+`skip_deleted = true` was justified on the message-list path netting one ESEARCH instead of an
+uncompressed `UID SEARCH ALL`. That reasoning holds only while `icache['undeleted_idx']` is
+populated, which requires `countmessages()` to actually issue its SEARCH. When the count comes
+from cache instead (`rcube_imap.php:731-733`), `rcube_imap_cache::validate()` falls through to a
+different branch that issues:
+
+```
+ALL UNDELETED NOT UID <compressed-uid-set>
+```
+
+On the 16k mailbox that uploads a potentially large UID set to Zoho on **every warm list
+request** — upload counted against the 1 GB / 15 min account budget. `avuz_filters` moving mail
+out of INBOX fragments the UID set, which inflates it further.
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh -u www-data avuz-mail-roundcube-2-roundcube-1 \
+  sh -c "grep -c 'NOT UID' /var/www/roundcube/logs/imap.log; grep -m1 -o 'ALL UNDELETED NOT UID.\{0,400\}' /var/www/roundcube/logs/imap.log | wc -c"
+```
+
+Zero matches: the justification holds. Any matches: record the byte size — if it is large, that
+is a reason to revert `skip_deleted` regardless of how Step 7b's correctness check turns out.
 
 - [ ] **Step 6: Check Redis evictions**
 
@@ -816,6 +855,35 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
 ```
 
 If `evicted_keys` is climbing, 512mb is still too low — raise it and note the new value in the results doc.
+
+**`evicted_keys > 0` means more than "needs more memory" here.** Sessions
+(`config.inc.php` `session_storage = 'redis'`, `session_lifetime = 10080`) live in the same
+`allkeys-lru` keyspace as prefetched bodies. Redis LRU does not distinguish them, so an evicted
+session key is an instant silent logout — potentially mid-compose. If evictions are non-zero,
+check whether sessions were among the casualties, and consider moving sessions to their own
+Redis instance or DB so bodies can never evict a session:
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh avuz-mail-roundcube-2-redis-1 \
+  sh -c "redis-cli DBSIZE; redis-cli --scan --pattern 'session*' | wc -l; redis-cli INFO stats | grep -E 'evicted_keys|expired_keys'"
+```
+
+- [ ] **Step 6c: Confirm no poisoned prefetch sentinels**
+
+The sentinel records which mime-ids were cached and `is_warm()` verifies a body key still
+exists, so an evicted body should no longer leave a message permanently "warm". Verify that
+holds in practice — pick a sentinel and confirm its bodies are present:
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh avuz-mail-roundcube-2-redis-1 \
+  sh -c "redis-cli --scan --pattern '*avuz_body*done*' | head -5"
+```
+
+For one of those keys, read its value (the cached mime-id list) and confirm the corresponding
+body key exists. A sentinel whose bodies are all gone means the fix is not working and messages
+are silently reverting to live Zoho fetches — record it and stop before prod.
 
 - [ ] **Step 6b: Watch for Zoho connection blocks**
 
@@ -847,10 +915,21 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
   sh -c 'ls -1 /proc/net/tcp >/dev/null 2>&1 && netstat -an 2>/dev/null | grep -c ":993.*ESTABLISHED" || echo "netstat unavailable"'
 ```
 
-97 users at ~2 connections each is ~194 against a ceiling of 200 — roughly 3% headroom. At the
-old 60s expiration idle connections self-reaped between bursts; at 1800s they persist through
-normal gaps, so occupancy trends toward the full active population during business hours. If the
-sampled count approaches 200, raise `cache_size` or lower `cache_expiration_time`.
+**Size this against PEAK, not average — the earlier "~2 connections per user" estimate was
+wrong.** `sendBatches()` in `prefetch.js` does not wait for a response: `rcmail.http_post` is
+async and `requestIdleCallback` fires within milliseconds, so a 30-row page fires ~4 prefetch
+POSTs nearly simultaneously. Each is a separate PHP-FPM request needing its own backend
+connection — they cannot share one — plus the foreground list request. That is roughly **5
+concurrent backend connections per user per page load**, not 2.
+
+At `cache_expiration_time 1800` those are held 30 minutes rather than 60 seconds, so peak
+concurrency sets steady-state occupancy. 97 users × 5 ≈ 485 against `cache_size 200`. Zoho's
+per-mailbox limit of 100 is still comfortable (5 per mailbox), but **the proxy's own pool is now
+the binding constraint.**
+
+So sample during a real page-load burst, not at rest. If the count approaches 200, raise
+`cache_size` (it costs only file descriptors and memory in the sidecar) rather than lowering
+`cache_expiration_time` — the expiration is what buys the latency win.
 
 - [ ] **Step 7: Verify `skip_deleted` hides no mail**
 
