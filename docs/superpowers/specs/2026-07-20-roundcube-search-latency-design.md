@@ -112,12 +112,54 @@ Two contributors:
    full `SELECT` round trip. This was a deliberate correctness choice (the cache
    serves stale counts and hides new mail) and is **not** revisited here.
 
-### Slow open
+### Slow open — and `avuz_prefetch` is making everything else slower
 
-Largely already solved by `plugins/avuz_prefetch`. Its effectiveness is undermined by
-`deploy/stack.reference.yml:46` — Redis is capped at `128mb` with `allkeys-lru`,
+Measured on staging with the 16k-message account (`logs/imap.log`, 2026-07-21
+02:01-02:05). A single `plugin.avuz_prefetch` request issues **50-90 sequential IMAP
+commands**; `_action=list` requests reached **84 commands in 6 seconds**.
+
+Cause is `plugins/avuz_prefetch/avuz_prefetch.php:90-112` — two nested loops, one
+IMAP round trip per MIME part:
+
+```php
+foreach ($list as $rawUid) {                           // up to 10 messages
+    $message = new rcube_message($uid, $mbox);         // → BODYSTRUCTURE fetch
+    foreach ($message->mime_parts as $mimeId => $part) {
+        $body = $message->get_part_body($mimeId, ...); // → one FETCH per part
+```
+
+Observed wire traffic for one message:
+
+```
+UID FETCH 2434 (BODY.PEEK[2.MIME])
+UID FETCH 2434 (BODY.PEEK[3.MIME])
+UID FETCH 2434 (BODY.PEEK[4.MIME])
+...
+```
+
+A 7-part message costs 8+ round trips. A batch of 10 costs ~70. At 198ms that is
+**~14 seconds per prefetch run**, executing continuously in the background
+(`prefetch.js:63-67` hooks `init`, `afterlist`, `listupdate`).
+
+This is the strongest available explanation for the 13.34s prod stall: a 4.8 kB
+response on a warm connection cannot otherwise take 13 seconds. The plugin built to
+make message opening faster is plausibly the largest single source of latency in the
+product.
+
+**Fix:** IMAP permits multiple body sections per `FETCH`, and `BODYSTRUCTURE` batches
+across UIDs:
+
+```
+UID FETCH 2430,2434,2442,… (BODYSTRUCTURE)        # 1 round trip, whole batch
+UID FETCH 2434 (BODY.PEEK[1.1] BODY.PEEK[1.2])    # 1 round trip per message
+```
+
+Batch of 10: ~70 round trips → ~11. Bandwidth is unchanged (text parts only, no
+attachments), so Zoho's 1 GB/15min cap is unaffected.
+
+Secondary: `deploy/stack.reference.yml:46` caps Redis at `128mb` with `allkeys-lru`,
 shared across sessions, `imap_cache`, and every prefetched body. Bodies are the
-largest entries and are evicted first under pressure, silently degrading the cache.
+largest entries and are evicted first, silently degrading the cache.
 
 ### Slow send
 
@@ -199,6 +241,9 @@ Reversible, no new services, no schema.
 
 | Change | Where | From → To |
 |---|---|---|
+| **Batch prefetch FETCHes** | `plugins/avuz_prefetch/avuz_prefetch.php:90-112` | ~70 round trips per batch → ~11 |
+| **Dedupe filter pass** | `plugins/avuz_filters/avuz_filters.php:23-24` | runs twice per refresh → once |
+| **ESEARCH for index queries** | `config/config.inc.php` | set `skip_deleted = true` |
 | Idle connection lifetime | `docker/imapproxy-sidecar/imapproxy.conf:8` | `60` → `1800` |
 | Redis ceiling | `deploy/stack.reference.yml:46` | `128mb` → `512mb` (starting value, see below) |
 | Response compression | `docker/nginx.conf` | add gzip for HTML/JS/CSS/JSON |
@@ -213,14 +258,41 @@ Bounded by `cache_size 200`; at ~2 connections per user against Zoho's per-mailb
 ceiling of 100 concurrent, this is safe by two orders of magnitude (see Zoho IMAP
 limits).
 
-**`avuz_filters` is deliberately left alone in Wave 1.** An earlier draft proposed
-dropping the `refresh` hook, keeping `login_after` + `new_messages`. That would break
-filtering: `plugins/avuz_filters/avuz_filters.php:18-21` documents that
-`new_messages` "only fires when check_recent detects a status diff (not always), so we
-use 'refresh' as the primary trigger". The real defect is that the pass runs
-unconditionally every 60s whether or not anything arrived — fixed properly in Wave 2
-by gating it on the `LIST-STATUS` result, which that wave introduces anyway. A filter
-pass then costs nothing when no mail arrived, which is most refreshes.
+**`avuz_filters`: keep the `refresh` hook, fix the duplication.** An earlier draft
+proposed dropping `refresh` and keeping `login_after` + `new_messages`. That would
+break filtering — `avuz_filters.php:18-21` documents that `new_messages` "only fires
+when check_recent detects a status diff (not always)".
+
+The pass itself is already cheap: `avuz_filters.log` shows
+`crit='UID 942:*' found=0 rules=2` — it searches only UIDs above the last-seen one,
+not a 1000-message scan.
+
+The actual defect is that **both** `new_messages` and `refresh` fire in the same
+request, so the pass runs twice. Confirmed on the wire — `A0007` and `A0009` are the
+identical `UID SEARCH RETURN (ALL) UID 942:*` — and in the log, with runs at
+`17:24:55` and `17:24:56`. Fix is a per-request guard, not a hook change.
+
+Further gating on `LIST-STATUS` (skip entirely when nothing arrived) lands in Wave 2,
+where that data is already being collected.
+
+**`skip_deleted = true` enables ESEARCH.** `rcube_imap_generic::search()` only
+requests ESEARCH when the criteria string contains a non-digit:
+
+```php
+if (empty($items) && preg_match('/[^0-9]/', $criteria)) {
+    $items = ['ALL'];
+}
+```
+
+With `skip_deleted = false` (the current default) and no search term, `$criteria` is
+empty, so the check fails and Roundcube issues plain `UID SEARCH ALL` — returning
+every UID individually (~16,000 numbers, ~100 kB on the large account, per
+message-list request). Setting `skip_deleted = true` makes the criteria `UNDELETED`,
+which enables `UID SEARCH RETURN (ALL) UNDELETED` and returns compact ranges instead.
+
+Verify during rollout that this does not hide mail: it suppresses messages flagged
+`\Deleted`, and Zoho moves deletions to Lixeira rather than flagging in place, so the
+expected impact is nil — but confirm rather than assume.
 
 **The sort-column issue is deliberately not fixed here.** See "Narrow issue: the
 missing SORT capability" above — it affects 12 of 97 users, and Wave 2 removes the
