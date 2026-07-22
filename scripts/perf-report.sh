@@ -14,8 +14,10 @@ case "$MODE" in
   concurrency) AWK_FILE="perf-concurrency.awk" ;;
   *) echo "mode must be 'actions' or 'concurrency'" >&2; exit 2 ;;
 esac
-AWK_BODY="$(cat "$SCRIPT_DIR/$AWK_FILE")"
+# base64 the awk body so quotes/apostrophes in it never collide with the remote
+# sh -c quoting. The container decodes it to a temp file and runs awk -f.
+AWK_B64="$(base64 < "$SCRIPT_DIR/$AWK_FILE" | tr -d '\n')"
 PORTAINER_ENV_FILE="${PORTAINER_ENV_FILE:-$SCRIPT_DIR/deploy.env}" \
 PORTAINER_ENDPOINT="${PORTAINER_ENDPOINT:-}" \
   "$SCRIPT_DIR/portainer-exec.sh" -u www-data "$CONTAINER" \
-  sh -c "tail -n $LINES /var/www/roundcube/logs/nginx-perf.log | awk '$AWK_BODY'"
+  sh -c "echo $AWK_B64 | base64 -d > /tmp/perf.awk && tail -n $LINES /var/www/roundcube/logs/nginx-perf.log | awk -f /tmp/perf.awk"

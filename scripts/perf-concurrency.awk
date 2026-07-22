@@ -1,9 +1,9 @@
 #!/usr/bin/awk -f
 # Reads nginx "perf" log lines:
 #   <msec> <request_time> <upstream_response_time> <status> <method> <request_uri>
-# Reconstructs each request's [start,end] interval (start = msec - request_time),
+# Reconstructs each request [start,end] interval (start = msec - request_time),
 # then splits list/show request_time into "during prefetch" vs "prefetch idle" by
-# whether any plugin.avuz_prefetch request's interval overlapped it. Prints
+# whether any plugin.avuz_prefetch request interval overlapped it. Prints
 # count/p50/p95/p99 per bucket. If the two buckets for an action match, foreground
 # latency is independent of prefetch — the criterion is met.
 {
