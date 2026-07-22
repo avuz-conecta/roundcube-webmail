@@ -8,32 +8,52 @@ in value for the client's most-felt symptom after folder navigation.
 
 ## Problem
 
-Opening a message with a complex, deeply-nested MIME structure is slow the first time — measured
-at **16 seconds** on staging for one real message. Verbatim from the wire log (`imap.log`):
+Building the MIME structure of a complex, deeply-nested message is expensive because Roundcube
+fetches each part's MIME header in a **separate** IMAP command. Measured per-message on staging
+(`imap.log`, counting `BODY.PEEK[N.MIME]` round trips per UID):
 
 ```
-01:52:09 → 01:52:25   cmds=42   mime_walk=21    ← one message open, 16 seconds
+UID 17055: 20 round trips    UID 3: 19    UID 7: 18    UID 15: 17 ...
+distribution tail: 16, 17, 18, 19, 20, 22, 24 round trips
 ```
 
-That single open issued **42 IMAP commands, 21 of them `BODY.PEEK[N.MIME]` structure fetches**,
-each a sequential round trip at ~200ms to Zoho. The message — a forwarded chain with embedded
-PDFs and inline images from a construction/invoices folder — has ~21 MIME parts across several
-nesting levels.
+Complex messages — forwarded chains with embedded PDFs and inline images, common in this client's
+invoice/construction folders — spread parts across many nesting levels, roughly one part per
+level, so the current per-level batching barely helps. Each of those 20-24 MIME-header fetches is
+a sequential round trip at ~200ms to Zoho: **~4-5 seconds of pure structure walk per message,
+intrinsic to opening it cold.** The built structure is then cached in Postgres (`messages_cache`),
+so the second open is instant — the cost is entirely on the first, cold build.
 
-The second open of the same message is **instant**: the built structure is cached in Postgres
-(`messages_cache`), so the walk never repeats. The cost is entirely on the **first, cold** open.
+### Evidence-integrity note
 
-This is not the images (they load lazily and only slow the first open) and not contention — the
-open was doing 16s of its own structure-fetch work, confirmed by the command trace, not waiting on
-anything.
+An earlier draft of this spec cited "one 16s open, 42 commands, 21 mime fetches." That trace was
+**contaminated** — it was a 6-message prefetch batch (UIDs 147-151, 166) interleaved with a
+foreground open in the shared `imap.log`, misread as a single open. The corrected evidence above
+is per-UID MIME round-trip counts, which are unaffected by interleaving. The conclusion holds —
+complex messages do 20+ structure round trips — but on sound data.
 
-### Relationship to prefetch
+### This fixes BOTH of the two real problems
 
-`avuz_prefetch` is meant to pay this cost in the background (it builds `rcube_message`, which
-builds and caches the structure) so foreground opens hit the warm cache. It works — *when it
-reaches the message first*. When the user opens a message prefetch has not yet warmed (e.g. deep in
-a list while prefetch is still on batch 1), the open pays the full cold walk. Making the walk cheap
-fixes **both** paths at once, because they run the identical `get_structure` code.
+A concurrency split of message-open latency (perf log, `during-prefetch` vs `prefetch-idle`):
+
+```
+opens DURING prefetch:  n=32  avg=4.20s  max=29.14s
+opens prefetch-IDLE:    n=48  avg=2.31s  max=17.93s
+```
+
+Two distinct costs: **contention** (opens 1.8× slower while prefetch runs) and **intrinsic**
+structure walk (idle opens still hit 17.93s). This one fix addresses both, because prefetch runs
+the *same* `get_structure` walk on every message it warms:
+
+- **Foreground cold opens** drop by the removed round trips (~4-5s on a complex message).
+- **Prefetch batches shrink dramatically.** A cold batch of 8 messages × ~15 MIME round trips ≈
+  120 round trips ≈ the observed **27s** cold batch. Collapse each message to 1-2 round trips and
+  the batch drops to ~16 round trips ≈ **~4s**. That directly shrinks the contention window — the
+  1.8× slowdown exists *because* prefetch holds connections for 27s; make batches ~4s and the
+  window largely closes.
+
+So the leverage is higher than a per-open saving alone: the same change cuts intrinsic open cost
+**and** the contention that Wave 1.5's pacing could only partly mitigate.
 
 ## Root cause
 
@@ -97,8 +117,33 @@ Two passes over the already-fetched BODYSTRUCTURE tree, with a single header fet
    `!empty($mime_part_headers[$tmp_part_id])` pattern — the plumbing to pass headers down is
    already there; only the *source* changes from per-level fetch to the shared map.
 
-Result: **N round trips → 1.** A 16s cold open becomes ~2s (one BODYSTRUCTURE + one MIME-header
-batch + the body fetch), and every prefetch warm gets the same reduction.
+Result: **N round trips → 1** for the MIME-header walk. On a complex message that removes ~4-5s
+of structure round trips; the open still pays SELECT + BODYSTRUCTURE + the body fetch, so a cold
+complex open goes from its structure-dominated time to roughly those unavoidable costs. Every
+prefetch warm gets the same per-message reduction, which is what shrinks the 27s batches to ~4s.
+
+Do NOT claim "16s → 2s" — the honest figure is "the structure-walk portion (~4-5s on a complex
+message, and the bulk of a 27s prefetch batch) collapses to one round trip." Verify the actual
+numbers on staging (below) rather than asserting them.
+
+### Chunk the fetch — do not assume one command fits
+
+A pathological message (deep forwarded chain, 100+ parts) would produce a single
+`UID FETCH uid (BODY.PEEK[1.MIME] … ×100)` command that can exceed the IMAP command-line length
+limit and error — which, on this path, means a broken structure and an unopenable message. The old
+per-level code chunked implicitly. The new collector must **chunk the ID list** (e.g. ≤ 50 sections
+per `fetchMIMEHeaders` call, looping) so the worst case degrades to a few round trips, never a
+protocol error. Observed messages top out at ~24 parts, so chunking is a safety rail, not the
+common path — but it is mandatory, not optional.
+
+### This fix stresses the #8282 parse harder than any prior code
+
+Issue #8282 was a parse failure on *multiple part headers in one response* (a regex broke on a
+Cyrillic filename). This change makes that response the **largest it has ever been** — every part
+of the whole message in one response instead of one nesting level's worth. It does not merely risk
+the #8282 class; it maximizes the exact condition #8282 broke on. The corpus's non-ASCII-filename
+and RFC-2231 cases are therefore not optional edge cases — they are the primary risk this change
+introduces, and must be in the corpus from the first test.
 
 ### The one hard correctness constraint
 
