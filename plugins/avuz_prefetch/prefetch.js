@@ -36,15 +36,6 @@
     return (Date.now() - sentAt) < SEEN_TTL_MS;
   }
 
-  var mbox = '';
-  // UIDs queued (module-scoped key mbox+':'+uid) but not yet POSTed. Guards
-  // against a listupdate firing while sendBatches is still dribbling out
-  // earlier batches — without this, the same not-yet-sent UIDs get collected
-  // and POSTed a second time. Cleared per-UID the moment its batch is sent,
-  // at which point it enters `seen` instead. Never persisted: if the tab dies
-  // mid-dribble the UID was never sent, so it must stay retryable (Finding B).
-  var inFlight = {};
-
   function pageUids() {
     // Roundcube base64-encodes the uid in the row DOM id, so read the real uid
     // from the row object (rcmail.message_list.rows[*].uid) instead of the id.
@@ -57,60 +48,91 @@
     return out;
   }
 
-  function idle(fn) {
-    if (window.requestIdleCallback) window.requestIdleCallback(fn, { timeout: 3000 });
-    else window.setTimeout(fn, 200);
+  var PREFETCH_RESPONSE_EVENT = 'responseafterplugin.avuz_prefetch'; // VERIFIED in Step 1
+  var BATCH_TIMEOUT_MS = 90000; // fallback if a response is lost; MUST exceed the
+                                // worst cold batch (~69s) or it fires mid-request
+                                // and double-sends. See the Wave 1.5 design doc.
+
+  // One warmer for the whole tab, always warming the CURRENT folder. runToken
+  // identifies the live run; starting a new run bumps it, so any pending
+  // response/timeout for the old run becomes a no-op. runTimer/runListener are
+  // the single outstanding batch's fallback timer and response listener.
+  var runToken = 0;
+  var runFolder = null;
+  var runActive = false;
+  var runTimer = null;
+  var runListener = null;
+
+  function detachRun() {
+    if (runTimer) { window.clearTimeout(runTimer); runTimer = null; }
+    if (runListener) { rcmail.removeEventListener(PREFETCH_RESPONSE_EVENT, runListener); runListener = null; }
   }
 
-  // uids is only the not-yet-seen, not-already-inFlight set for this page pass
-  // (dedup applied by the caller). Marking + persisting happens per batch,
-  // AFTER it is actually POSTed — a reload/nav that kills batches 2-4 must not
-  // claim them as seen, otherwise (with the server sentinel fixed to require
-  // live bodies) nothing would ever retry them.
-  //
-  // The folder is captured ONCE here, not read from module-level `mbox` per
-  // tick: sendBatches dribbles one batch per idle slot, so a folder switch
-  // mid-dribble must not relabel a still-inflight INBOX closure's remaining
-  // batches under the new folder (wrong _mbox POSTed, wrong UIDs marked seen).
-  function sendBatches(uids) {
-    if (!uids.length) return;
-    var m = mbox;
+  // Warm `folder`, one batch at a time. Supersedes any previous run: detachRun
+  // drops the old listener/timer and the ++runToken makes the old run's next
+  // check fail, so its un-sent batches are abandoned. The one batch already
+  // POSTed for the old folder still completes on the server — it cannot be
+  // recalled — but the rest are never sent, so the new folder's foreground
+  // request does not compete with the old folder's leftover prefetch.
+  function startRun(folder) {
+    detachRun();
+    var myToken = ++runToken;
+    runFolder = folder;
+
+    // Collect this folder's not-recently-warmed UIDs. isSeen has a 1h TTL, so a
+    // batch already sent this hour is skipped; un-sent batches of an earlier
+    // abandoned visit to this folder are NOT seen, so they re-queue here —
+    // coverage is deferred by a folder switch, never lost.
+    var all = pageUids();
+    var uids = [];
+    for (var k = 0; k < all.length; k++) {
+      if (!isSeen(folder + ':' + all[k])) uids.push(all[k]);
+    }
+    if (!uids.length) { runActive = false; return; }
+    runActive = true;
+
     var i = 0;
-    (function next() {
-      if (i >= uids.length) return;
+    (function sendNext() {
+      if (myToken !== runToken) return;              // superseded by a newer folder
+      if (i >= uids.length) { runActive = false; detachRun(); return; }
+
       var batch = uids.slice(i, i + BATCH);
       i += BATCH;
-      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: m });
-      for (var j = 0; j < batch.length; j++) {
-        var key = m + ':' + batch[j];
-        seen[key] = Date.now();
-        delete inFlight[key];
+
+      var advanced = false;
+      function advance() {
+        // First of (response, timeout) wins, and only if this run is still
+        // current. sendNext is scheduled OUT of the event-dispatch loop:
+        // rcube's triggerEvent iterates its handler array live (common.js:389),
+        // so re-registering synchronously here would fire the new listener in
+        // the same loop and cascade every batch at once.
+        if (advanced || myToken !== runToken) return;
+        advanced = true;
+        detachRun();
+        window.setTimeout(sendNext, 0);
       }
+      runListener = advance;
+      rcmail.addEventListener(PREFETCH_RESPONSE_EVENT, advance);
+      runTimer = window.setTimeout(advance, BATCH_TIMEOUT_MS);
+
+      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: folder });
+
+      // Mark seen at dispatch: a UID is seen iff its batch was sent. Un-sent
+      // batches (abandoned by a folder switch) are never marked, so they retry.
+      for (var j = 0; j < batch.length; j++) seen[folder + ':' + batch[j]] = Date.now();
       saveSeen();
-      idle(next); // one batch per idle slot — don't flood Zoho or block the click
     })();
   }
 
   function prefetchPage() {
     if (rcmail.env.task !== 'mail') return;
-    mbox = rcmail.env.mailbox;
+    var folder = rcmail.env.mailbox;
 
-    var all = pageUids();
-
-    // Skip anything still fresh in `seen` or already queued by a dribble that
-    // hasn't finished sending (inFlight) — the latter also serves as this
-    // pass's own in-loop dedupe, since it's marked immediately below.
-    var uids = [];
-    for (var i = 0; i < all.length; i++) {
-      var key = mbox + ':' + all[i];
-      if (isSeen(key) || inFlight[key]) continue;
-      inFlight[key] = 1;
-      uids.push(all[i]);
-    }
-
-    if (uids.length) {
-      sendBatches(uids);
-    }
+    // Folder changed → supersede and warm the new folder. Same folder but the
+    // previous run finished → pick up anything new (pagination, new mail). Same
+    // folder with a run still draining → leave it; new UIDs are collected on the
+    // next trigger after it finishes.
+    if (folder !== runFolder || !runActive) startRun(folder);
   }
 
   var t;
