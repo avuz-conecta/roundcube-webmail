@@ -122,7 +122,27 @@ $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 
 // -- Skin --
 $config['skin'] = 'avuz';
-$config['dont_override'] = ['skin'];
+
+// dont_override wins over a stored user preference (rcube_config.php:470) AND hides
+// the option in Settings (settings/index.php:508).
+//
+// check_all_folders: "Check all folders for new messages" is unusable against a
+// remote IMAP and was actively harmful here. With it on, check_recent.php:42 makes
+// every `refresh` walk every folder, issuing THREE commands per folder —
+// STATUS + SELECT + UID SEARCH. Zoho is ~198ms away and offers no way to batch
+// them, so the cost is folders x 3 x RTT, serialized.
+//
+// Measured on prod 2026-07-22: two users had it enabled (the only two on the
+// system). One has 107 folders -> ~321 IMAP commands per refresh -> refreshes of
+// 20-136s, every 2 minutes, all day, each holding a PHP worker. Everyone else
+// refreshed in ~1s. It also caused real data loss: a 64s+ refresh is a wide window
+// for the session write race that silently erased a user's attachments on send.
+//
+// Turning it off costs those users live cross-folder unread counts, which at 107
+// folders never worked in any useful sense anyway — counts now update when a
+// folder is visited. See docs/superpowers/specs/2026-07-22-open-latency-HANDOFF.md.
+$config['check_all_folders'] = false;
+$config['dont_override'] = ['skin', 'check_all_folders'];
 // Paths are skin-relative: Roundcube's file_callback resolves a leading-slash
 // href against the skin tree (skins/avuz first), so '/images/x' → skins/avuz/images/x.
 // A site-absolute '/skins/avuz/...' would be re-prefixed with the skin path (404).
