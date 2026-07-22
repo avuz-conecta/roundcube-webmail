@@ -24,3 +24,9 @@ Wave 1 + 1.5 live on prod (endpoint 5, stack 36). Verified:
 Users get new prefetch.js on next page load via ?s=1784681400 (a mtime prod never served before,
 so all browsers fetch fresh). No manual user action needed.
 Rollback: redeploy app @sha256:e2ed97a3... (or the images are also tagged :1.0.0 for the NEW build).
+
+---
+## Update: FPM max_children 20 -> 30 (build 587cc143f, version 1.0.1)
+App-image-only change (sed on www.conf), no base rebuild. Host is 7GB/4CPU; 30 keeps RAM headroom
+(~80MB/worker), 40 would risk OOM. Redeploy pulls new :latest app image; Redis not recreated so
+sessions survive. Rollback to pre-FPM-change = redeploy :1.0.0 (Wave 1+1.5 with max_children 20).
