@@ -198,3 +198,32 @@ Relevant specs/plans in `docs/superpowers/`:
 - `scripts/perf-report.sh <prod-container> actions` (perf instrumentation ships in the image) to
   confirm list-path command counts dropped and nothing regressed.
 - Watch `evicted_keys` (should stay 0) and errors.log for any Zoho block messages.
+
+---
+
+## OPEN: PHP-FPM worker ceiling (pm.max_children = 20) vs 97 users
+
+`Dockerfile.base`: `pm = dynamic`, `pm.max_children = 20`, start 5, max_spare 8, `memory_limit 256M`.
+
+**Concern:** prefetch requests hold a worker for **15-35s** on cold folders (Wave 1.5 = one
+prefetch in flight PER TAB, so ~1 long-held worker per actively-browsing user). ~20 users browsing
+cold at once → all 20 workers held by prefetch → foreground list/open requests queue → everyone
+slow. Same contention as the connection-level root cause, at the worker level.
+
+**Could not measure today's peak:** the prod deploy recreated the container (FPM warnings go to
+stdout, wiped), and prod runs IMAP debug OFF. Post-deploy idle state: 6 procs, listen-queue 0.
+
+**Monitor going forward (perf instrumentation now live on prod):**
+- `PORTAINER_ENV_FILE=scripts/deploy.prod.env PORTAINER_ENDPOINT=5 ./scripts/perf-report.sh
+  avuz-mail-roundcube-roundcube-1 actions` — during business hours. High `list`/`show` p95 WHILE
+  `plugin.avuz_prefetch` shows long durations = worker starvation.
+- FPM listen backlog live: `ss -tln | grep :9000` (Recv-Q > 0 sustained = workers exhausted).
+  NOTE: do NOT read `/proc/1/fd/*` via portainer-exec — it blocks and times out.
+- Enable `pm.status_path` (needs a base-image rebuild) for proper active-worker/queue metrics if
+  the perf-log signal is ambiguous.
+
+**Fixes (same two levers as the open-latency contention):**
+1. Quick mitigation: raise `pm.max_children` in `Dockerfile.base` (20→40). Base rebuild + confirm
+   host RAM (40 workers × ~100MB ≈ 4GB).
+2. Real fix: incremental prefetch batches (3→5→8) — shorter requests free workers faster. Ties into
+   the leading open-latency fix above.
