@@ -119,7 +119,39 @@ documented in `customizations.json` alongside the existing washtml core patch. U
 an option later if the carry cost or a rebase conflict makes it worthwhile; it is explicitly out of
 scope now.
 
-## Design
+## UNRESOLVED: why is it 12 commands today? (mandatory spike, gates everything)
+
+The design below assumes the 12 `BODY.PEEK[N.MIME]` fetches come from `structure_part`'s per-level
+`fetchMIMEHeaders` calls, and that collecting IDs across all levels collapses them to one. **That
+causal claim is not yet verified, and a careful code read actively contradicts it:**
+
+- `fetchMIMEHeaders` batches — one call = one command (`rcube_imap_generic.php:2842`). So 12
+  commands means **12 separate calls**, i.e. 12 `structure_part` invocations each collecting exactly
+  one part.
+- But the parts in question (`[2]`…`[13]`) are inline images with a **content-id**. `is_attachment_part`
+  (`:2307`) requires `empty($part[3])`, and `$part[3]` is the content-id (non-empty) — so it returns
+  **false** for these parts. They are not `message/rfc822` either. By the code as written,
+  `structure_part` should add **none** of them to `$mime_part_headers` and issue **zero** MIME
+  fetches for them.
+- Yet the wire shows 12. `BODY.PEEK[N.MIME]` has only those two callers, both in `structure_part`.
+
+The code as read and the observed behavior cannot both be right. Until that is resolved, **there is
+no basis to claim the fix produces one command** — it may be targeting the wrong path.
+
+**Spike (Task 1 of the plan, blocking):** reproduce the 12 fetches deterministically — a unit/
+integration test that feeds message 162's real BODYSTRUCTURE array through `get_structure` against a
+mock `rcube_imap_generic` that records every command — and identify the exact call site and
+condition that emits each `[N.MIME]`. Only once the origin is proven, and a throwaway prototype of
+the two-pass collection is shown to drop the recorded command count from 12 to 1 **on that same
+fixture**, does the rest of this design proceed. If the origin turns out not to be the per-level
+`fetchMIMEHeaders` batching described below, this design is wrong and must be redone.
+
+The BODYSTRUCTURE for 162 (captured, to seed the fixture):
+`((("TEXT" "PLAIN" …)("TEXT" "HTML" …) "ALTERNATIVE" …)("IMAGE" "PNG" ("name" "image001.png")
+"<image001.png@…>" "image001.png" "BASE64" … ("inline" …)) …)` — root multipart with a nested
+alternative and multiple inline (content-id) image parts.
+
+## Design (contingent on the spike confirming the mechanism)
 
 Two passes over the already-fetched BODYSTRUCTURE tree, with a single header fetch between them.
 
