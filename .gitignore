@@ -1,6 +1,8 @@
 # ignore files added to these directories
 logs/*
 temp/*
+# phpunit writes a repo-root errors.log when a test triggers rcube::raise_error
+/errors.log
 config/*
 # track our avuz config (no secrets — all values from env vars)
 !config/config.inc.php
