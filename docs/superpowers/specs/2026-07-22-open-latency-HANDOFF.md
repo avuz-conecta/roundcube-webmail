@@ -139,7 +139,7 @@ cached by the browser). The cost is entirely the **first, cold** open of a not-y
 |---|---|
 | **Wave 1** (prefetch idempotency, run-guard, imapproxy 1800s, Redis 512mb, gzip) | **LIVE ON PROD** (`:1.0.1`) + staging. Validated (list path 84→7 commands). |
 | **Wave 1.5** (cancel-on-switch warmer, serialize batches, busy-yield, TTL 5d) | **LIVE ON PROD** (`:1.0.1`) + staging. Serialization + event-name verified live. Cancel-on-switch not user-confirmed via waterfall (low risk). |
-| **FPM bump** (`pm.max_children` 20→30→40) | On prod via `:1.0.3`. **Not a latency lever — see the FPM section; do not raise it further.** Prod container currently runs 30 from a live edit made during the 2026-07-22 outage; the image says 40. A redeploy clears the edit. |
+| **FPM bump** (`pm.max_children` 20→30→40) | On prod via `:1.0.3`, running 40; container and image agree. **Not a latency lever — see the FPM section; do not raise it further.** Pool config can be changed with zero downtime via `sed` + `kill -USR2` on the FPM master (~1 request pays ~0.2s); a redeploy is never needed for it. |
 | **Session three-way merge** (attachment loss on send) | **LIVE ON PROD** (`:1.0.3`). `program/lib/Roundcube/rcube_session.php`, covered by `tests/Framework/SessionRace.php`. |
 | **PHP-free `/healthz`** | **LIVE ON PROD** (`:1.0.3`). Healthcheck no longer mints a session every 30s. |
 | **Per-request timing shim** | **LIVE ON PROD** (`:1.0.3`). `logs/php-perf.log`: start, PHP-only duration, session id, action. Disable with `AVUZ_PERF_LOG=0`. |

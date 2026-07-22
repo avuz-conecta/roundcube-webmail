@@ -76,11 +76,25 @@ and endpoint 9 (stale, id 65), and deploy.sh refuses an ambiguous name:
 
     PORTAINER_ENV_FILE=scripts/deploy.prod.env ./scripts/deploy.sh -y 36
 
-**Post-deploy caveat — `pm.max_children` split-brain.** The running container was live-edited to 30
-during the outage below (`sed` on www.conf + `kill -USR2` on the FPM master). The image still says
-40. A restart preserves the edit; a **redeploy silently restores 40**. Since 40 was measured
-healthy, the intent is to keep the image at 40 and let the next deploy clear the edit — but know
-that the running config does not match the image until then.
+**`pm.max_children` is 40, container and image agree.** (It was live-edited to 30 during the outage
+below, then put back to 40 the same way once the outage was traced to the link. Resolved — nothing
+pending for the next deployer.)
+
+**Changing FPM config without downtime.** A redeploy recreates the container and is real
+unavailability; it is not needed for pool config. Edit the file and graceful-reload instead:
+
+    sed -i 's/^pm.max_children = .*/pm.max_children = N/' /usr/local/etc/php-fpm.d/www.conf
+    kill -USR2 <fpm-master-pid>      # master pid is 12 in this image
+
+SIGUSR2 re-execs the master, so in-flight requests finish and workers are replaced cleanly.
+Measured cost on prod: exactly one request at 0.206s (vs 0.05s warm), then baseline — the opcache
+SHM is rebuilt, but it is shared across workers so the first compile warms it for all of them.
+Staging showed the same shape (1.27s then 0.04-0.07s). What is NOT lost, and is what would actually
+hurt: imapproxy's authenticated Zoho connections (separate container), sessions and prefetched
+bodies (Redis), messages_cache (Postgres).
+
+Caveat: an edit made this way lives only in the container. A redeploy restores the image's value —
+so change the image too when the value is meant to stick.
 
 Digests (these are the rollback anchors for whatever comes next):
 - app:       registry.avuz.app/admin/avuz-roundcube@sha256:a3ecde7400027d4d2cc3de22fd256187ce143b52b67be9ef489154c8bc23a475
