@@ -34,14 +34,36 @@ shared opcache — not the ~80-100MB earlier notes assumed, so worker count is n
 The real ceiling is Zoho IMAP latency/concurrency, not local resources.
 
 **What is NOT solved (the reason a brainstorm is still needed):**
-- **Two sessions with ~20-40s `refresh`, continuously.** Found 2026-07-22 via `logs/php-perf.log`:
-  sessions `baffb4b8` (auxadm@grupovidalar.com.br) and `d7ae5086` run ~8 refreshes per 5 minutes at
-  20-40s each, burning roughly a worker between them all day. Every other session refreshes in
-  ~1s. Pre-existing; unrelated to any deploy or to the link outage. This is also the mechanism
-  behind the attachment loss — `baffb4b8`'s 86s refresh is what erased that user's attachments
-  (the session merge fix stops the data loss, not the 40s refresh). NOT yet diagnosed: ruled out
-  is `avuz_filters` (only 3 users have any rules and neither of these two is among them).
-  Next step: `ROUNDCUBE_DEBUG=1` briefly to capture IMAP wire timings for one of these refreshes.
+- **SOLVED 2026-07-22 — `check_all_folders` is a per-user foot-gun.** Two sessions ran `refresh` at
+  20-136s while everyone else was ~1s: `auxadm@grupovidalar.com.br` and
+  `atendimento@grupovidalar.com.br`. Both, and **only** those two out of the whole user base, have
+  the "Check all folders for new messages" preference set (`check_all_folders";b:1;` in
+  `users.preferences`).
+
+  `check_recent.php:42` reads it as `$check_all = $rcmail->action != 'refresh' || config(...)`, so
+  with it on, every refresh walks every folder issuing **three IMAP commands per folder** —
+  `STATUS` + `SELECT` + `UID SEARCH`. Captured from the wire:
+
+      20:20:02 A0149 STATUS Financeiro/Maiara (MESSAGES UNSEEN)
+      20:20:02 A0150 SELECT Financeiro/Maiara
+      20:20:02 A0151 UID SEARCH 795
+      20:20:02 A0152 STATUS "Free Flow - PBE" (MESSAGES UNSEEN)
+      ...
+
+  auxadm has **107 folders**, atendimento 42. 107 x 3 x ~0.2s RTT = ~64s, matching the observed
+  refreshes. No individual command is slow (every one averages ~0.2s, a single round trip) — it is
+  purely volume x latency.
+
+  This is also the mechanism behind the attachment loss: a 64s+ refresh is a wide window in which
+  a concurrent upload gets overwritten. The session merge fix stops the data loss; removing the
+  long request removes the window.
+
+  **Diagnostic trap worth remembering:** an earlier pass "ruled out" folder count by querying
+  `cache_index`, which only counts folders a user has *opened* — 17 and 9 for these two, with
+  seemingly-fast users showing 25-26. The real IMAP folder counts are 107 and 42. Wrong proxy,
+  wrong conclusion; the wire log is what settled it.
+
+  **Fix not yet applied** — see the decision below.
 - Slow **all-folder search** (~13s) — needs Wave 2 (search index), still only specced.
 - Slow **first open of image-heavy mail during prefetch** — the connection/bandwidth/FPM
   contention below. Wave 1.5 helps but doesn't cure it. This is the brainstorm's target.
