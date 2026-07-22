@@ -578,15 +578,15 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
 ```
 
 Redeploy with image re-pull. Confirm the new `prefetch.js` is live (it should contain the
-serialized `sendBatches`):
+cancel-on-switch warmer, e.g. `startRun` and `BATCH_TIMEOUT_MS`):
 
 ```bash
 PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
   ./scripts/portainer-exec.sh avuz-mail-roundcube-2-roundcube-1 \
-  grep -c "BATCH_TIMEOUT_MS" /var/www/roundcube/plugins/avuz_prefetch/prefetch.js
+  sh -c 'grep -c "BATCH_TIMEOUT_MS\|startRun" /var/www/roundcube/plugins/avuz_prefetch/prefetch.js'
 ```
 
-Expected: `1` (or more). If `0`, the image did not repull — redeploy.
+Expected: `>=2`. If `0`, the image did not repull — redeploy.
 
 - [ ] **Step 4: Confirm the serialized chain actually runs (not silently stalled)**
 
