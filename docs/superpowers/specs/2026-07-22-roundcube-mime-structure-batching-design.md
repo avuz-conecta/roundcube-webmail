@@ -137,14 +137,15 @@ Two passes over the already-fetched BODYSTRUCTURE tree, with a single header fet
    `!empty($mime_part_headers[$tmp_part_id])` pattern — the plumbing to pass headers down is
    already there; only the *source* changes from per-level fetch to the shared map.
 
-Result: **N round trips → 1** for the MIME-header walk. On a complex message that removes ~4-5s
-of structure round trips; the open still pays SELECT + BODYSTRUCTURE + the body fetch, so a cold
-complex open goes from its structure-dominated time to roughly those unavoidable costs. Every
-prefetch warm gets the same per-message reduction, which is what shrinks the 27s batches to ~4s.
+Result: **N round trips → 1** for the MIME-header walk. On the measured 13-part message that removes
+~11 round trips ≈ **~2.2s** of the open; the open still pays SELECT + BODYSTRUCTURE + the parallel
+part-content fetches, which is the rest of its time. Every prefetch warm gets the same per-message
+reduction, which is what shrinks the observed 27s cold batches toward the low single digits.
 
-Do NOT claim "16s → 2s" — the honest figure is "the structure-walk portion (~4-5s on a complex
-message, and the bulk of a 27s prefetch batch) collapses to one round trip." Verify the actual
-numbers on staging (below) rather than asserting them.
+State the benefit honestly: **~2.2s per complex foreground cold open** (measured, modest), and a
+**large reduction in prefetch batch duration** (each warmed message sheds ~12 round trips) which is
+where most of the value is. Do NOT inflate it to whole-open figures — the content/image fetches are
+untouched. Re-measure on staging after the change rather than asserting.
 
 ### Chunk the fetch — do not assume one command fits
 
@@ -210,9 +211,11 @@ output matches.
 - **Core patch** to `program/lib/Roundcube/rcube_imap.php` only. Document it in `customizations.json`
   next to the washtml patch, with the `@TODO` reference and the reason it can't be a plugin.
 - Ships behind the same build/deploy as everything else; no new services, no config.
-- Verify on staging with the perf instrumentation already in place: the same complex message that
-  took 16s cold should open in ~2s cold (flush its cache first to force cold), and `mime_walk`
-  command count per open should drop from ~21 to ~1.
+- Verify on staging with the perf instrumentation already in place, using the same controlled
+  cold-open protocol as the baseline measurement (flush `cache_messages` for the account + Redis
+  bodies, prefetch idle, open the same 13-part message). The count of `BODY.PEEK[N.MIME]` commands
+  in the open must drop from **12 to 1**, and the open's `request_time` should fall by ~2s. Re-run
+  a prefetch batch cold and confirm the batch duration drops substantially (the larger win).
 
 ## Out of scope
 
