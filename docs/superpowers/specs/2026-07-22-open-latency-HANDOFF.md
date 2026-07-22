@@ -7,6 +7,34 @@ out (don't repeat them), what's shipped, the tooling, and the leading fix direct
 
 ---
 
+## STATE AS OF 2026-07-22 (read this first)
+
+**Wave 1 + Wave 1.5 + gzip + FPM bump are LIVE ON PROD** (endpoint 5 "apps", stack 36,
+`avuz-mail-roundcube`, version `1.0.1`). Verified healthy: HTTP 200, sessions survived (1830),
+0 fatal errors. Config now on prod:
+- prefetch idempotency + cancel-on-switch serialized warmer + filter run-guard (Wave 1/1.5)
+- body cache TTL 5d, Redis `maxmemory` 512mb, imapproxy `cache_expiration_time` 1800
+- gzip on (verified `Content-Encoding: gzip` on JS + docs)
+- `pm.max_children` 20 → **30** (app-image `sed` override; see FPM section)
+- nginx per-request perf instrumentation (so prod is measurable)
+
+Users get the new client JS automatically on next page load via `?s=<mtime>` cache-bust — no
+manual steps. **Rollback**: redeploy `:1.0.0` (Wave 1+1.5, FPM 20) or app digest
+`@sha256:e2ed97a3…` (pre-Wave). Details: `2026-07-22-PROD-ROLLBACK-ANCHORS.md`.
+
+**Prod host is small: 7GB RAM / 4 CPU.** This bounds every option (FPM workers, Redis size).
+
+**What is NOT solved (the reason a brainstorm is still needed):**
+- Slow **all-folder search** (~13s) — needs Wave 2 (search index), still only specced.
+- Slow **first open of image-heavy mail during prefetch** — the connection/bandwidth/FPM
+  contention below. Wave 1.5 helps but doesn't cure it. This is the brainstorm's target.
+
+**First move next session:** pull prod perf numbers during business hours (command in the FPM
+section) to see, with real data, whether FPM 30 is enough and how bad open-during-prefetch
+contention is under real load — then design the fix (incremental batches + cross-tab pause).
+
+---
+
 ## The confirmed root cause (definitive, measured)
 
 Opening an image-heavy email **while prefetch is running** is slow (16s–90s observed) because of
@@ -92,11 +120,12 @@ cached by the browser). The cost is entirely the **first, cold** open of a not-y
 
 | Work | State |
 |---|---|
-| **Wave 1** (prefetch idempotency, run-guard, imapproxy 1800s, Redis 512mb, gzip) | On **staging** (`avuz-mail-roundcube-2`, port 8091), validated (list path 84→7 commands). **NOT on prod.** |
-| **Wave 1.5** (cancel-on-switch warmer, serialize batches, busy-yield, TTL 5d) | On **staging**, serialization + event-name verified live. **NOT on prod.** Cancel-on-switch not user-confirmed via waterfall. |
+| **Wave 1** (prefetch idempotency, run-guard, imapproxy 1800s, Redis 512mb, gzip) | **LIVE ON PROD** (`:1.0.1`) + staging. Validated (list path 84→7 commands). |
+| **Wave 1.5** (cancel-on-switch warmer, serialize batches, busy-yield, TTL 5d) | **LIVE ON PROD** (`:1.0.1`) + staging. Serialization + event-name verified live. Cancel-on-switch not user-confirmed via waterfall (low risk). |
+| **FPM bump** (`pm.max_children` 20→30) | **LIVE ON PROD** (`:1.0.1`). Band-aid; real fix is shorter prefetch. See FPM section. |
 | **MIME structure batching** spec | **BLOCKED/dead** (see wrong-turn #2). |
 | **Wave 2** (local search index) | Specced (`2026-07-20-roundcube-search-latency-design.md`), untouched. All-folder search still ~13s. Client asked for all-folder-default — gated on Wave 2. |
-| **Prod** | Nothing from this whole effort deployed. User decision: no rollout until more is solved. |
+| **Prod deploy** | Endpoint 5 "apps", stack 36, version `1.0.1`. Healthy, sessions preserved. Endpoint 9 "peramix-us" has a stale (not-running) stack — ignore. Rollback in `2026-07-22-PROD-ROLLBACK-ANCHORS.md`. |
 
 Relevant specs/plans in `docs/superpowers/`:
 - `specs/2026-07-20-roundcube-search-latency-design.md` — Wave 1 root causes + Wave 2 (search)
@@ -150,11 +179,11 @@ Relevant specs/plans in `docs/superpowers/`:
    how "foreground active" is detected/expired.
 4. Separately decide the **priority question**: keep pushing open-latency, or ship Wave 1 + 1.5 to
    prod (validated, help the common path) and/or pivot to Wave 2 (search — the client's
-   first-named symptom, still ~13s). Nothing is on prod yet.
+   first-named symptom, still ~13s). Wave 1+1.5 ARE now on prod (1.0.1); Wave 2 is not.
 
 ---
 
-## PROD ROLLOUT of Wave 1 + 1.5 (for tomorrow morning)
+## PROD ROLLOUT of Wave 1 + 1.5 — DONE 2026-07-22 (kept as the procedure for future deploys)
 
 **Users need NO manual steps.** The console cache/sessionStorage clearing we did was test-only
 (forcing cold state to measure). For a real deploy:
@@ -167,7 +196,7 @@ Relevant specs/plans in `docs/superpowers/`:
 - Residual: a user who keeps the tab open overnight runs old JS until they reload — harmless
   (today's behavior). Users reaching mail fresh via Nextcloud each morning get new JS on load.
 
-**Deploy overnight** so first load tomorrow is clean.
+**Deploy overnight** so first load tomorrow is clean. (DONE: deployed 2026-07-22 as :1.0.0 then :1.0.1; sessions survived, no user disruption.)
 
 ### Rollout steps (execute carefully — gated commands will prompt)
 1. **Pick a VERSION tag** (prod uses `:${VERSION}` + `:latest`, e.g. `1.0.0`). CONFIRM with user.
