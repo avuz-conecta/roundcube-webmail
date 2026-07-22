@@ -3,8 +3,39 @@
 **Date**: 2026-07-22
 **Branch**: avuz-customization
 **Status**: DESIGN — awaiting approval
-**Priority**: This is the real fix for slow cold message opens. It precedes Wave 2 (search index)
-in value for the client's most-felt symptom after folder navigation.
+**Priority**: BLOCKED — the spike (below) falsified this spec's premise for the tested message.
+
+## SPIKE RESULT — premise falsified for the tested message (2026-07-22)
+
+The mandatory spike ran (core `fetchMIMEHeaders` temporarily instrumented on staging, message 162
+opened, reverted). Result, on verified facts:
+
+- `BODY.PEEK[N.MIME]` is built only at `rcube_imap_generic.php:2839`, inside `fetchMIMEHeaders`,
+  which has only two callers — both in `structure_part`.
+- `is_attachment_part` returns **false** for cid-inline images (their content-id makes `$part[3]`
+  non-empty). Message 162's parts are all cid-inline images, so `structure_part` collects none and
+  `fetchMIMEHeaders` is never called. The instrumented open confirmed **zero** calls.
+- Therefore the "12 `BODY.PEEK[N.MIME]` for message 162" that motivated this spec was
+  **misattributed** — interleaved prefetch/other-message commands in the shared `imap.log`. Message
+  162 does not trigger the structure walk at all; its slow open is the **inline images' content**
+  (8-13 large BASE64 part fetches), which this fix does not touch.
+
+**Consequence:** the MIME-batching fix helps only messages with *real attachments*
+(attachment-disposition parts or `message/rfc822` children) spread across nesting levels — a class
+that exists (per-UID logs show messages with 20+ MIME fetches) but which has **not** been confirmed
+to be what this client actually opens and feels as slow. The one message tested (162) is the wrong
+class.
+
+**Gate before any implementation:** identify, from real usage, whether the client's slow opens are
+the attachment/rfc822 class (fix helps) or the cid-inline-image class (fix does nothing — the cost
+is image content, addressed only by image caching, which is out of scope for bandwidth reasons).
+Do not build this until that is answered. If the slow opens are predominantly cid-image invoices
+like 162, this spec should be abandoned in favor of revisiting image handling.
+
+---
+
+*(Original priority claim, retained for context: "the real fix for slow cold message opens." The
+spike shows this was true only for a message class we have not confirmed the client hits.)*
 
 ## Problem
 
