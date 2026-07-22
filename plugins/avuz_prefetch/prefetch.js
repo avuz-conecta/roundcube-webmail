@@ -17,7 +17,7 @@
   // re-queued (see isSeen). A legacy plain `1` (written by pre-fix code) is
   // treated as expired too, so it self-heals on the next pass.
   var SEEN_KEY = 'avuz_prefetch_seen';
-  var SEEN_TTL_MS = 60 * 60 * 1000; // 1 hour — well under the 10-day body TTL
+  var SEEN_TTL_MS = 60 * 60 * 1000; // 1 hour — well under the 5-day body TTL
   var seen = loadSeen();
 
   function loadSeen() {
