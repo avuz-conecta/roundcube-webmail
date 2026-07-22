@@ -163,6 +163,16 @@ $config['display_version'] = false;
 // through a workday. Roundcube also sets PHP session.gc_maxlifetime from this. --
 $config['session_lifetime'] = 10080; // 1 week (7 * 24 * 60 min)
 
+// -- Background refresh interval (seconds) --
+// Was unset, so Roundcube used its 60s default. On prod that made `refresh` the
+// single largest consumer of PHP worker time: 5519 requests averaging 4.46s,
+// against a 30-worker pool that peaked at exactly 30. Each slow refresh is also
+// a window in which a concurrent attachment upload can be lost (the session
+// merge in rcube_session::_fixvars lets a long request write back its stale
+// compose_data), so halving the poll rate narrows that exposure too.
+// Cost: new-mail notification is up to 2 minutes late instead of 1.
+$config['refresh_interval'] = 120;
+
 // -- Session cookie — required for iframe embedding across subdomains --
 // SameSite=None allows the session cookie to be sent inside an iframe
 // served from a different subdomain. Requires HTTPS (Secure flag).

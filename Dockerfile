@@ -35,12 +35,13 @@ RUN chown -R www-data:www-data /var/www/roundcube \
   && chmod -R 770 /var/www/roundcube/logs \
   && chmod -R 770 /var/www/roundcube/temp
 
-# PHP-FPM: raise the worker ceiling. Prefetch requests hold a worker 15-35s on cold
-# folders (one per active tab), so 20 could be exhausted by ~20 concurrent browsers,
-# queuing foreground requests. 30 (not 40) keeps RAM headroom on the 7GB host
-# (~80MB/worker). Set here in the app image (fast rebuild) rather than Dockerfile.base
-# to avoid a base recompile. The real fix is shorter prefetch batches (incremental).
-RUN sed -i 's/^pm.max_children = .*/pm.max_children = 30/' /usr/local/etc/php-fpm.d/www.conf
+# PHP-FPM pool + php.ini overrides. Both live in the app image (fast rebuild)
+# rather than Dockerfile.base, which would need a base recompile. The pool file
+# replaces the base image's www.conf outright — see docker/php-fpm-www.conf for
+# the reasoning behind each value.
+COPY docker/php-fpm-www.conf /usr/local/etc/php-fpm.d/www.conf
+COPY docker/php-avuz.ini /usr/local/etc/php/conf.d/zz-avuz.ini
+COPY docker/perf-prepend.php /usr/local/etc/php/perf-prepend.php
 
 # Copy runtime configs
 COPY docker/nginx.conf /etc/nginx/http.d/default.conf

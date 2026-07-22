@@ -52,11 +52,14 @@
         "docker/supervisor.conf",
         "scripts/build-base.sh",
         "scripts/build-push.sh",
-        "portainer-stack.yml"
+        "portainer-stack.yml",
+        "docker/php-fpm-www.conf",
+        "docker/php-avuz.ini",
+        "docker/perf-prepend.php"
       ],
-      "description": "Two-stage Docker build (base + app). PHP 8.2 FPM + Nginx + Supervisor. Entrypoint initializes DB schema on first boot. Multi-platform build scripts (arm64 local, amd64 staging/prod).",
+      "description": "Two-stage Docker build (base + app). PHP 8.2 FPM + Nginx + Supervisor. Entrypoint initializes DB schema on first boot. Multi-platform build scripts (arm64 local, amd64 staging/prod). The app image owns the FPM pool (docker/php-fpm-www.conf, replacing the base image's www.conf), php.ini overrides (docker/php-avuz.ini) and a per-request timing shim loaded via auto_prepend_file (docker/perf-prepend.php), so tuning does not require a base rebuild.",
       "risk": "low",
-      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change. scripts/build-push.sh also builds/pushes the avuz-password-broker image using the same registry/org/env/platform/push logic — see deploy/stack.reference.yml for the runtime topology. portainer-stack.yml has been removed; deploy/stack.reference.yml is now the single source of truth (push via 10.50.100.103:8080, pull via registry.avuz.app — same registry)."
+      "notes": "Registry: 10.50.100.103:8080/admin/avuz-roundcube. Base image only needs rebuild when PHP version or extensions change. scripts/build-push.sh also builds/pushes the avuz-password-broker image using the same registry/org/env/platform/push logic — see deploy/stack.reference.yml for the runtime topology. portainer-stack.yml has been removed; deploy/stack.reference.yml is now the single source of truth (push via 10.50.100.103:8080, pull via registry.avuz.app — same registry). php-fpm-www.conf fully replaces the base www.conf — a pool value added to Dockerfile.base will be silently shadowed unless it is also added here. pm.status_path=/fpm-status and slowlog are exposed for diagnostics; nginx restricts /fpm-status to 127.0.0.1."
     },
     {
       "id": "zoho-broker-driver",
