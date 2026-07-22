@@ -9,20 +9,16 @@ in value for the client's most-felt symptom after folder navigation.
 ## Problem
 
 Building the MIME structure of a complex, deeply-nested message is expensive because Roundcube
-fetches each part's MIME header in a **separate** IMAP command. Measured per-message on staging
-(`imap.log`, counting `BODY.PEEK[N.MIME]` round trips per UID):
-
-```
-UID 17055: 20 round trips    UID 3: 19    UID 7: 18    UID 15: 17 ...
-distribution tail: 16, 17, 18, 19, 20, 22, 24 round trips
-```
+fetches each part's MIME header in a **separate** IMAP command, sequentially. A controlled cold
+open of a real 13-part invoice message (measurement below) issued **12 consecutive
+`BODY.PEEK[N.MIME]` commands** — one per part, unbatched — inside the single open request. At
+~200ms/round-trip to Zoho that is **~2.4s of pure structure walk on a 13-part message**, and scales
+with part count (log aggregates show messages up to ~24 parts).
 
 Complex messages — forwarded chains with embedded PDFs and inline images, common in this client's
-invoice/construction folders — spread parts across many nesting levels, roughly one part per
-level, so the current per-level batching barely helps. Each of those 20-24 MIME-header fetches is
-a sequential round trip at ~200ms to Zoho: **~4-5 seconds of pure structure walk per message,
-intrinsic to opening it cold.** The built structure is then cached in Postgres (`messages_cache`),
-so the second open is instant — the cost is entirely on the first, cold build.
+invoice/construction folders — spread parts across nesting levels such that the current per-level
+batching fails to combine them. The cost is entirely on the first, cold build: the structure is
+then cached in Postgres (`messages_cache`), so the second open is instant.
 
 ### Clean single-open measurement (verified)
 
