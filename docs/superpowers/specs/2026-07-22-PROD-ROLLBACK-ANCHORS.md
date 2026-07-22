@@ -125,7 +125,16 @@ change was responsible, and none was needed to fix it.
     16:50  11.44s   worst; container restart here changed nothing
     16:55   8.10s   bad link removed around here
     17:00   4.83s
-    17:05   1.54s   recovered
+    17:05   3.87s   outage over — but back to the ~4.5s baseline, NOT the 1.0s of 15:30-16:15
+
+Note the last line was first read as "1.54s recovered" from a partial bucket (n=24) and corrected
+once the bucket completed (n=74, 3.87s). Same trap as lesson 3 below, hit while writing lesson 3.
+Never read a bucket before it closes.
+
+Open question left by this: prod ran `refresh` at 1.0s for 45 minutes on 1.0.3 (max_children 40),
+and sits at ~3.9s after recovery (max_children 30, live edit). Candidate explanations — post-restart
+cold caches, time-of-day load, the worker-count difference, or residual link degradation — are not
+yet separated. Worth resolving before drawing any conclusion about what 1.0.3 bought.
 
 ### What this rules out, with evidence
 
