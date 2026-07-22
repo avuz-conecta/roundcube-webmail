@@ -151,3 +151,50 @@ Relevant specs/plans in `docs/superpowers/`:
 4. Separately decide the **priority question**: keep pushing open-latency, or ship Wave 1 + 1.5 to
    prod (validated, help the common path) and/or pivot to Wave 2 (search — the client's
    first-named symptom, still ~13s). Nothing is on prod yet.
+
+---
+
+## PROD ROLLOUT of Wave 1 + 1.5 (for tomorrow morning)
+
+**Users need NO manual steps.** The console cache/sessionStorage clearing we did was test-only
+(forcing cold state to measure). For a real deploy:
+- New `prefetch.js` reaches users automatically via Roundcube's `?s=<filemtime>` cache-bust
+  (`rcmail_output_html.php:1073`) on their next page load — a fresh URL the browser hasn't cached,
+  so `Cache-Control: immutable` doesn't block it.
+- Old Redis/Postgres caches self-heal: `avuz_prefetch_cache::is_warm` treats a legacy `'1'` sentinel
+  as not-warm and rewrites it. No flush.
+- Mixed version is safe: new server PHP + old client JS works (old JS POSTs UIDs the same way).
+- Residual: a user who keeps the tab open overnight runs old JS until they reload — harmless
+  (today's behavior). Users reaching mail fresh via Nextcloud each morning get new JS on load.
+
+**Deploy overnight** so first load tomorrow is clean.
+
+### Rollout steps (execute carefully — gated commands will prompt)
+1. **Pick a VERSION tag** (prod uses `:${VERSION}` + `:latest`, e.g. `1.0.0`). CONFIRM with user.
+2. `./scripts/build-push.sh <VERSION> prod` — builds + pushes app + imapproxy sidecar to the prod
+   registry.
+3. **Per prod tenant stack** (prod = Portainer endpoint 5, `scripts/deploy.prod.env`): update the
+   stack to pull the new image, AND make two config changes that don't come from the image:
+   - **Redis `--maxmemory` → 512mb** (or higher): a MANUAL Portainer stack edit — `scripts/deploy.sh`
+     re-sends Portainer's *current* file, so a git/reference change does NOT reach the running stack.
+   - imapproxy `cache_expiration_time 1800` is baked into the sidecar image → arrives via image pull,
+     no manual edit.
+4. Redeploy each stack with **pull image** enabled.
+5. Verify per stack: container image tag updated; `prefetch.js` in container has `startRun`/
+   `BATCH_TIMEOUT_MS` (4 markers); `redis-cli CONFIG GET maxmemory` = 536870912;
+   `grep cache_expiration_time /etc/imapproxy.conf` = 1800.
+
+### UNKNOWNS to resolve with the user before deploying (do NOT guess)
+- **Which prod tenant stacks get the deploy?** Prod endpoint 5 has multiple roundcube stacks
+  (e.g. `avuz-mail-roundcube`, `grupo-vidalar-roundcube`, …). List them, confirm scope. Each needs
+  its own Redis Portainer edit + redeploy.
+- **Version tag** to use.
+- **Redis prod sizing**: prod mailboxes/users may differ from staging; size `maxmemory` with
+  headroom (staging used 512mb; measure `used_memory`/`evicted_keys` after).
+- **Rollback plan**: prod images are versioned, so rollback = redeploy previous `:${VERSION}`. Note
+  the current prod version before deploying.
+
+### Post-deploy sanity (prod)
+- `scripts/perf-report.sh <prod-container> actions` (perf instrumentation ships in the image) to
+  confirm list-path command counts dropped and nothing regressed.
+- Watch `evicted_keys` (should stay 0) and errors.log for any Zoho block messages.
