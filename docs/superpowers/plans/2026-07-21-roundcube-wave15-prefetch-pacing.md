@@ -4,7 +4,7 @@
 
 **Goal:** Stop the one-time prefetch warm from competing with the user's foreground clicks, keep Redis memory below the eviction ceiling, and instrument the app so "is it faster?" is answered by per-action percentiles instead of anecdote.
 
-**Architecture:** Four independent changes — nginx timing instrumentation (measurement foundation, deploys first to capture a baseline), a one-line body-cache TTL reduction, serialized prefetch batches in `prefetch.js`, and a foreground-yield guard in the same file. Plus one staging investigation (PHP-FPM contention) that may or may not produce a config change. No new services, no new PHP logic.
+**Architecture:** Four changes — nginx timing instrumentation (measurement foundation, deploys first to capture a baseline), a one-line body-cache TTL reduction, a rewrite of `prefetch.js` into a single cancel-on-switch warmer that serializes batches and always warms the current folder, and a foreground-yield guard on top of it. Plus one staging investigation (PHP-FPM contention) that may or may not produce a config change. No new services, no new PHP logic.
 
 **Tech Stack:** Browser JavaScript (Roundcube Elastic skin, no JS test harness), PHP 8.2, nginx (Alpine, config included inside `http{}`), Redis, awk for log aggregation.
 
@@ -16,7 +16,7 @@
 - Do not add IMAP round trips or increase per-message bytes fetched from Zoho.
 - Do NOT modify anything under `program/lib/Roundcube/` — core patches cost us on upstream rebases.
 - Prod/staging RTT to Zoho is ~198ms. The worst observed cold prefetch batch was **69 seconds** — any timeout shorter than that will fire mid-request and double-send.
-- The `seen` map and `inFlight` map in `prefetch.js` are the Wave 1 retry mechanism: a UID is marked `seen` only after its batch is actually sent, and unsent UIDs must stay retryable. Do not break that invariant.
+- The `seen` map in `prefetch.js` is the retry mechanism: a UID is marked `seen` only when its batch is actually sent, and unsent UIDs must stay retryable so an abandoned folder's batches re-queue on return. Do not break that invariant. (Task 3 removes the separate `inFlight` map — its role is taken over structurally by the single-run model.)
 - There is no JavaScript test harness in this repo. JS changes are verified by `node --check` plus named staging behavioral observations — not unit tests. Do not invent a test framework.
 - Commit messages must not mention Claude Code.
 
@@ -242,28 +242,39 @@ message untouched for 5 days. messages_cache_ttl (Postgres) is unaffected."
 
 ---
 
-### Task 3: serialize prefetch batches
+### Task 3: one cancel-on-switch prefetch warmer for the current folder
 
-Today `sendBatches()` dribbles one batch per `requestIdleCallback` without waiting for the
-previous POST to return, so ~4 batches are in flight at once, each holding its own imapproxy
-backend connection. Serialize: send one batch, wait for its response (or a fallback timeout), then
-send the next.
+The current `sendBatches` fires ~4 batches concurrently (fire-and-forget), and `prefetchPage` starts
+a fresh chain on every `afterlist`/`listupdate`. Two problems compound: concurrent batches overrun
+the imapproxy pool and contend with foreground clicks, and — if we naively serialized per-call —
+multiple chains would register listeners on the same `responseafterplugin.avuz_prefetch` event and
+advance each other's batches (cross-triggering).
+
+Both are solved by the same restructure: **one module-level warmer, always warming the folder the
+user is currently on.** Batches go out one at a time (serialized). Switching folders supersedes the
+previous run — its un-sent batches are simply never sent — so the new folder's foreground request
+never competes with the old folder's leftover prefetch. At most the single batch already POSTed for
+the old folder finishes server-side (an in-flight request cannot be recalled); the other ~3 are
+abandoned.
+
+This replaces `sendBatches`, `prefetchPage`, and the module-level `mbox`/`inFlight` state. The
+`inFlight` map is removed: its only job was preventing a mid-dribble `listupdate` from re-collecting
+not-yet-sent UIDs, and that is now handled structurally — a same-folder trigger while a run is active
+is ignored, so no re-collection happens.
 
 **Files:**
-- Modify: `plugins/avuz_prefetch/prefetch.js` (`sendBatches`)
+- Modify: `plugins/avuz_prefetch/prefetch.js` (replace `mbox`/`inFlight` declarations, `sendBatches`, `prefetchPage`; remove the now-unused `idle` helper)
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: nothing consumed by later tasks. Task 4 edits the same function and assumes the
-  serialized, one-batch-at-a-time structure this task creates.
+- Consumes: `pageUids()`, `isSeen()`, `seen`, `saveSeen()`, `BATCH` — all unchanged, defined above the replaced region.
+- Produces: module-level `startRun(folder)` and the run-state variables. Task 4 adds a busy check inside `startRun`'s `sendNext`.
 
 - [ ] **Step 1: Verify the completion event name empirically — DO THIS FIRST, on the deployed staging**
 
 This is the riskiest assumption in the wave. `program/js/app.js:9336` fires
 `triggerEvent('responseafter' + response.action)`, so the expected event is
 `responseafterplugin.avuz_prefetch` — but `response.action` is server-supplied and has not been
-inspected. If the name is wrong, the serialized chain stalls after batch 1 and prefetch dies
-silently.
+inspected. If the name is wrong, the warmer stalls after batch 1 and prefetch dies silently.
 
 In a browser console on staging (port 8091), logged in:
 
@@ -271,89 +282,111 @@ In a browser console on staging (port 8091), logged in:
 rcmail.addEventListener('responseafterplugin.avuz_prefetch', function(){ console.log('PREFETCH RESPONSE FIRED'); });
 ```
 
-Then open an unwarmed folder to trigger prefetch. If `PREFETCH RESPONSE FIRED` logs, the name is
-correct — use it. If it does NOT log, find the real action string:
+Then open an unwarmed folder. If `PREFETCH RESPONSE FIRED` logs, the name is correct. If it does
+NOT log, find the real action string:
 
 ```js
 rcmail.addEventListener('responseafter', function(e){ console.log('action=', e.response ? e.response.action : rcmail.env.last_action); });
 ```
 
-Record the confirmed event name in the commit message and use exactly that string in Step 2. Do
-not proceed on the assumed name unverified.
+Record the confirmed event name in the commit message and use exactly that string in Step 2.
 
-- [ ] **Step 2: Rewrite `sendBatches` to chain on the response**
+- [ ] **Step 2: Replace the warmer**
 
-Replace the current `sendBatches` function in `plugins/avuz_prefetch/prefetch.js` with:
+In `plugins/avuz_prefetch/prefetch.js`, replace everything from the `var mbox = '';` declaration
+(around line 39, with its `inFlight` block) down through the end of the `prefetchPage` function
+(the closing `}` before `var t;`) with the block below. Also delete the now-unused `idle` helper
+function. Leave `pageUids`, the `seen`/`isSeen`/`saveSeen` block, `BATCH`, and the `schedule`/`init`
+wiring at the bottom untouched.
 
 ```javascript
-  // Serialized: one batch POSTed at a time, next only after the previous batch's
-  // response (or a fallback timeout). Concurrent batches each grabbed their own
-  // imapproxy backend connection; at ~4 per page across 97 users that overran the
-  // proxy's 200-connection pool and contended with the user's foreground clicks.
-  //
-  // The fallback timer (BATCH_TIMEOUT_MS) MUST exceed the worst cold batch — a
-  // cold batch has been measured at 69s — or it fires mid-request and double-sends.
-  //
-  // A UID is marked `seen` only after its batch is dispatched (unchanged from Wave
-  // 1); an unsent batch's UIDs are never marked, so they stay retryable on the next
-  // pass. Advancing on the fallback timer does not mark anything extra seen.
-  var BATCH_TIMEOUT_MS = 90000; // > worst observed cold batch (69s), with margin
-  var PREFETCH_RESPONSE_EVENT = 'responseafterplugin.avuz_prefetch'; // VERIFIED in Task 3 Step 1
+  var PREFETCH_RESPONSE_EVENT = 'responseafterplugin.avuz_prefetch'; // VERIFIED in Step 1
+  var BATCH_TIMEOUT_MS = 90000; // fallback if a response is lost; MUST exceed the
+                                // worst cold batch (~69s) or it fires mid-request
+                                // and double-sends. See the Wave 1.5 design doc.
 
-  function sendBatches(uids) {
-    if (!uids.length) return;
-    var m = mbox;
-    var i = 0;
-    var advanced = false;
-    var timer = null;
+  // One warmer for the whole tab, always warming the CURRENT folder. runToken
+  // identifies the live run; starting a new run bumps it, so any pending
+  // response/timeout for the old run becomes a no-op. runTimer/runListener are
+  // the single outstanding batch's fallback timer and response listener.
+  var runToken = 0;
+  var runFolder = null;
+  var runActive = false;
+  var runTimer = null;
+  var runListener = null;
 
-    function advance() {
-      if (advanced) return;      // response and timeout can both fire — run once
-      advanced = true;
-      if (timer) { window.clearTimeout(timer); timer = null; }
-      rcmail.removeEventListener(PREFETCH_RESPONSE_EVENT, onResponse);
-      // Schedule the next batch OUTSIDE the current event-dispatch loop. onResponse
-      // runs inside rcube's synchronous triggerEvent, which iterates its handler
-      // array live (common.js:389, `i < this._events[evt].length`). Calling next()
-      // directly would re-add the listener mid-loop and the live loop would fire it
-      // again, cascading every remaining batch at once — the opposite of
-      // serialization. setTimeout(0) defers next() until the dispatch loop finishes.
-      window.setTimeout(next, 0);
+  function detachRun() {
+    if (runTimer) { window.clearTimeout(runTimer); runTimer = null; }
+    if (runListener) { rcmail.removeEventListener(PREFETCH_RESPONSE_EVENT, runListener); runListener = null; }
+  }
+
+  // Warm `folder`, one batch at a time. Supersedes any previous run: detachRun
+  // drops the old listener/timer and the ++runToken makes the old run's next
+  // check fail, so its un-sent batches are abandoned. The one batch already
+  // POSTed for the old folder still completes on the server — it cannot be
+  // recalled — but the rest are never sent, so the new folder's foreground
+  // request does not compete with the old folder's leftover prefetch.
+  function startRun(folder) {
+    detachRun();
+    var myToken = ++runToken;
+    runFolder = folder;
+
+    // Collect this folder's not-recently-warmed UIDs. isSeen has a 1h TTL, so a
+    // batch already sent this hour is skipped; un-sent batches of an earlier
+    // abandoned visit to this folder are NOT seen, so they re-queue here —
+    // coverage is deferred by a folder switch, never lost.
+    var all = pageUids();
+    var uids = [];
+    for (var k = 0; k < all.length; k++) {
+      if (!isSeen(folder + ':' + all[k])) uids.push(all[k]);
     }
-    function onResponse() { advance(); }
+    if (!uids.length) { runActive = false; return; }
+    runActive = true;
 
-    function next() {
-      if (i >= uids.length) return;
+    var i = 0;
+    (function sendNext() {
+      if (myToken !== runToken) return;              // superseded by a newer folder
+      if (i >= uids.length) { runActive = false; detachRun(); return; }
+
       var batch = uids.slice(i, i + BATCH);
       i += BATCH;
 
-      advanced = false;
-      rcmail.addEventListener(PREFETCH_RESPONSE_EVENT, onResponse);
-      timer = window.setTimeout(advance, BATCH_TIMEOUT_MS);
-
-      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: m });
-
-      // Mark seen at dispatch (Wave 1 invariant): these UIDs were sent, so they
-      // must not be re-queued this session. inFlight is cleared here too.
-      for (var j = 0; j < batch.length; j++) {
-        var key = m + ':' + batch[j];
-        seen[key] = Date.now();
-        delete inFlight[key];
+      var advanced = false;
+      function advance() {
+        // First of (response, timeout) wins, and only if this run is still
+        // current. sendNext is scheduled OUT of the event-dispatch loop:
+        // rcube's triggerEvent iterates its handler array live (common.js:389),
+        // so re-registering synchronously here would fire the new listener in
+        // the same loop and cascade every batch at once.
+        if (advanced || myToken !== runToken) return;
+        advanced = true;
+        detachRun();
+        window.setTimeout(sendNext, 0);
       }
-      saveSeen();
-    }
+      runListener = advance;
+      rcmail.addEventListener(PREFETCH_RESPONSE_EVENT, advance);
+      runTimer = window.setTimeout(advance, BATCH_TIMEOUT_MS);
 
-    next();
+      rcmail.http_post('plugin.avuz_prefetch', { _uids: batch.join(','), _mbox: folder });
+
+      // Mark seen at dispatch: a UID is seen iff its batch was sent. Un-sent
+      // batches (abandoned by a folder switch) are never marked, so they retry.
+      for (var j = 0; j < batch.length; j++) seen[folder + ':' + batch[j]] = Date.now();
+      saveSeen();
+    })();
+  }
+
+  function prefetchPage() {
+    if (rcmail.env.task !== 'mail') return;
+    var folder = rcmail.env.mailbox;
+
+    // Folder changed → supersede and warm the new folder. Same folder but the
+    // previous run finished → pick up anything new (pagination, new mail). Same
+    // folder with a run still draining → leave it; new UIDs are collected on the
+    // next trigger after it finishes.
+    if (folder !== runFolder || !runActive) startRun(folder);
   }
 ```
-
-Key points, all load-bearing:
-- `advance()` is idempotent via the `advanced` flag: the response event and the timeout can race,
-  and only the first may schedule the next batch.
-- The listener is added before each POST and removed in `advance()`, so a stale listener from an
-  earlier batch cannot advance a later one.
-- Marking `seen` stays at dispatch time (not response time), preserving the Wave 1 retry
-  invariant: a UID is `seen` iff its batch was sent.
 
 - [ ] **Step 3: Syntax check**
 
@@ -364,19 +397,38 @@ node --check plugins/avuz_prefetch/prefetch.js
 Expected: exit 0, no output. If `node` is unavailable, skip and rely on Task 5's staging load — a
 syntax error stops the message list from rendering, which is immediately visible.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Confirm nothing else references the removed symbols**
+
+```bash
+grep -nE "sendBatches|inFlight|[^a-z]idle\(|var mbox" plugins/avuz_prefetch/prefetch.js
+```
+
+Expected: no matches. If any appear, a reference to a removed symbol was left behind — fix it before
+committing.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add plugins/avuz_prefetch/prefetch.js
-git commit -m "perf(prefetch): serialize batches, one POST in flight at a time
+git commit -m "perf(prefetch): one cancel-on-switch warmer for the current folder
 
-sendBatches dribbled batches on requestIdleCallback without awaiting the previous
-response, so ~4 ran concurrently, each holding an imapproxy backend connection —
-overrunning the 200-slot pool across users and contending with foreground clicks.
-Now each batch waits for the <VERIFIED-EVENT-NAME> event, with a 90s fallback
-timer (above the 69s worst cold batch, so it cannot fire mid-request and
-double-send). advance() is idempotent so the response/timeout race resolves once.
-seen-marking stays at dispatch, preserving the Wave 1 retry invariant."
+Replaces the fire-and-forget dribble (which fired ~4 concurrent batches per
+page) and the per-click chain model with a single module-level warmer that
+serializes batches and always warms the folder the user is on. Switching folders
+supersedes the previous run via a run token, so the old folder's un-sent batches
+are abandoned and the new folder's foreground request no longer competes with
+leftover prefetch; at most the one already-POSTed batch finishes server-side.
+
+Each batch waits for the <VERIFIED-EVENT-NAME> event with a 90s fallback timer
+(above the 69s worst cold batch, so it cannot fire mid-request and double-send).
+sendNext is scheduled via setTimeout(0) so it runs outside rcube's live event
+dispatch loop, preventing a synchronous cascade of all batches. A single
+module-level listener eliminates the cross-chain triggering that per-call chains
+would have on the shared response event.
+
+Removes the inFlight map: its role (blocking mid-dribble re-collection) is now
+structural — a same-folder trigger while a run is active is ignored. seen is
+marked at dispatch, preserving the Wave 1 retry invariant."
 ```
 
 (Replace `<VERIFIED-EVENT-NAME>` with the string confirmed in Step 1.)
@@ -390,37 +442,45 @@ a locked foreground request is outstanding. Defer a batch when the UI is busy, b
 persistently busy UI cannot starve prefetch forever.
 
 **Files:**
-- Modify: `plugins/avuz_prefetch/prefetch.js` (`sendBatches`, the `next` function from Task 3)
+- Modify: `plugins/avuz_prefetch/prefetch.js` (`startRun`'s `sendNext`, from Task 3)
 
 **Interfaces:**
-- Consumes: the serialized `sendBatches` structure from Task 3.
+- Consumes: the `startRun` / `sendNext` structure from Task 3.
 - Produces: nothing.
 
-- [ ] **Step 1: Add the busy check to `next()`**
+- [ ] **Step 1: Add the busy check at the top of `sendNext`**
 
-In the `sendBatches` function, replace the `next` function body so it defers when busy. Change:
+In the `sendNext` function inside `startRun`, add a busy-defer guard. The declaration
+`var deferrals = 0;` goes just inside `startRun`, next to `var i = 0;`. Then change the top of
+`sendNext` from:
 
 ```javascript
-    function next() {
-      if (i >= uids.length) return;
+    var i = 0;
+    (function sendNext() {
+      if (myToken !== runToken) return;              // superseded by a newer folder
+      if (i >= uids.length) { runActive = false; detachRun(); return; }
+
       var batch = uids.slice(i, i + BATCH);
 ```
 
 to:
 
 ```javascript
+    var i = 0;
     var deferrals = 0;
-    var MAX_DEFERRALS = 20; // ~ bounded starvation guard; then proceed anyway
-
-    function next() {
-      if (i >= uids.length) return;
+    var MAX_DEFERRALS = 20; // bounded starvation guard (~6s), then proceed anyway
+    (function sendNext() {
+      if (myToken !== runToken) return;              // superseded by a newer folder
+      if (i >= uids.length) { runActive = false; detachRun(); return; }
 
       // Lose races against the user: if a locked foreground request is in flight,
       // wait and retry rather than compete for a backend connection. Bounded so a
-      // permanently busy UI eventually gets prefetched rather than never.
+      // permanently busy UI eventually gets prefetched rather than never. The
+      // myToken check above still fires first, so a folder switch during a defer
+      // still supersedes correctly.
       if (rcmail.busy && deferrals < MAX_DEFERRALS) {
         deferrals++;
-        window.setTimeout(next, 300);
+        window.setTimeout(sendNext, 300);
         return;
       }
       deferrals = 0;
@@ -428,7 +488,7 @@ to:
       var batch = uids.slice(i, i + BATCH);
 ```
 
-Leave the rest of `next()` (from `i += BATCH;` onward) unchanged.
+Leave the rest of `sendNext` (from `i += BATCH;` onward) unchanged.
 
 - [ ] **Step 2: Syntax check**
 
@@ -557,7 +617,21 @@ PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
 
 Each prefetch request should connect at a distinct time. If multiple `Connecting` lines cluster in
 the same 1-2 seconds, batches are overlapping — the serialization is broken (likely the
-`setTimeout(next, 0)` deferral in `advance()` was dropped) and must be fixed before proceeding.
+`setTimeout(sendNext, 0)` deferral in `advance()` was dropped) and must be fixed before proceeding.
+
+**Also verify cancel-on-switch.** Open a cold folder with many messages, wait ~5s (so a batch or
+two go out), then immediately switch to a different folder. The abandoned folder's remaining batches
+must stop. Watch which folder prefetch is fetching after the switch:
+
+```bash
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/portainer-exec.sh -u www-data avuz-mail-roundcube-2-roundcube-1 \
+  sh -c 'grep -a "plugin.avuz_prefetch" /var/www/roundcube/logs/imap.log | grep -a "SELECT" | tail -8'
+```
+
+After the switch, the `SELECT` lines in prefetch requests should be the NEW folder, not the
+abandoned one. At most one straggler request for the old folder (the batch already in flight at the
+moment of the switch) may complete — more than one means the old run is not being superseded.
 
 - [ ] **Step 5: Let the "after" window accumulate, then compare**
 
