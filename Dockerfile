@@ -28,6 +28,10 @@ COPY skins/avuz /var/www/roundcube/skins/avuz
 # rcube_washtml.php: '=' base64-padding fix — without this COPY the build uses
 # the stock (buggy) file and blank-signature images persist. See customizations.json.
 COPY program/lib/Roundcube/rcube_washtml.php /var/www/roundcube/program/lib/Roundcube/rcube_washtml.php
+# rcube_session.php: three-way session merge — without this COPY a long-running
+# request writes back its stale copy of compose_data and silently erases
+# attachments uploaded while it was in flight. See customizations.json.
+COPY program/lib/Roundcube/rcube_session.php /var/www/roundcube/program/lib/Roundcube/rcube_session.php
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \

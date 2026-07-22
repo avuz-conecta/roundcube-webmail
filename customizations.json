@@ -113,6 +113,18 @@
       "notes": "Core file patch — re-verify on upstream upgrade; upstream may fix this line differently. Security-sensitive (the line is part of a remote-image-blocking hardening); '=' is a legit base64 char so allowing it does not weaken the check. IMPORTANT: the Dockerfile downloads the stock release tarball and overlays only listed files — a core patch has NO effect unless a matching `COPY program/lib/...` line exists in Dockerfile (added under 'Core patches'). Any future core-file patch needs its own COPY line."
     },
     {
+      "id": "session-concurrent-write-merge",
+      "type": "core-patch",
+      "paths": [
+        "program/lib/Roundcube/rcube_session.php",
+        "tests/Framework/SessionRace.php",
+        "Dockerfile"
+      ],
+      "description": "rcube_session::_fixvars performs a three-way merge instead of letting the writing request win every key. sess_write captures $this->vars before get_cache() re-reads the store, so _fixvars can tell 'this request changed the key' from 'another request changed it while we were running'. A key the request did not touch now defers to the store.",
+      "risk": "medium",
+      "notes": "Fixes silent attachment loss on send (prod 2026-07-22): an 86s `refresh` overlapping an upload wrote back compose_data as it was at compose-open, so the message sent with only the identity signature image and none of the user's files, with no error shown. Covered by tests/Framework/SessionRace.php (3 tests; the first fails without the patch). Upstream 1.6.14 has no equivalent fix, so re-apply after any rebase and re-run that test. RESIDUAL, not fixed: two uploads overlapping each other still lose one, because both legitimately change the key and _fixvars never applies $this->appends (only reload() does, and only compose.php calls it). Not observed on prod, where uploads take 0.04-0.24s."
+    },
+    {
       "id": "avuz-filters-plugin",
       "type": "plugin",
       "paths": [

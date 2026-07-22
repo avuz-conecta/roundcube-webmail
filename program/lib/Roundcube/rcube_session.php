@@ -165,12 +165,18 @@ abstract class rcube_session
             return true;
         }
 
+        // What this request loaded at its start. Captured before get_cache(),
+        // which re-reads the store for slow requests and overwrites $this->vars.
+        // _fixvars needs both to tell "this request changed the key" from
+        // "another request changed it while we were running".
+        $basevars = $this->vars;
+
         // check cache
         $oldvars = $this->get_cache($key);
 
         // if there are cached vars, update store, else insert new data
         if ($oldvars) {
-            $newvars = $this->_fixvars($vars, $oldvars);
+            $newvars = $this->_fixvars($vars, $oldvars, $basevars);
             return $this->update($key, $newvars, $oldvars);
         }
         else {
@@ -211,8 +217,12 @@ abstract class rcube_session
 
     /**
      * Merge vars with old vars and apply unsets
+     *
+     * @param string      $vars     This request's session data at shutdown
+     * @param string      $oldvars  What the store holds right now
+     * @param string|null $basevars What the store held when this request started
      */
-    protected function _fixvars($vars, $oldvars)
+    protected function _fixvars($vars, $oldvars, $basevars = null)
     {
         $newvars = '';
 
@@ -233,8 +243,35 @@ abstract class rcube_session
                     }
                 }
 
-                $newvars = $this->serialize(array_merge(
-                    (array)$a_oldvars, (array)$this->unserialize($vars)));
+                $a_vars = (array) $this->unserialize($vars);
+
+                // AVUZ PATCH — attachments lost on send, prod 2026-07-22.
+                //
+                // array_merge below lets this request's copy win for every key it
+                // holds. For a long request that is wrong: it was loaded before
+                // another request wrote, so writing it back reverts that key. A
+                // `refresh` running 86s across an upload put back the compose data
+                // as it was at compose-open, dropping the user's attachments while
+                // keeping the signature image added at init. The message then sent
+                // short, with no error anywhere.
+                //
+                // Only keys this request actually changed may win. A key we did
+                // not touch (our value is identical to what we loaded) defers to
+                // whatever the store holds now. Keys we never had are untouched by
+                // this loop and still come from $a_oldvars via array_merge.
+                if (is_string($basevars) && $basevars !== $oldvars) {
+                    $a_basevars = (array) $this->unserialize($basevars);
+
+                    foreach ($a_vars as $k => $v) {
+                        if (array_key_exists($k, $a_basevars) && $a_basevars[$k] === $v
+                            && array_key_exists($k, $a_oldvars)
+                        ) {
+                            $a_vars[$k] = $a_oldvars[$k];
+                        }
+                    }
+                }
+
+                $newvars = $this->serialize(array_merge((array)$a_oldvars, $a_vars));
             }
             else {
                 $newvars = $vars;
