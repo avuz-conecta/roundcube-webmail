@@ -45,3 +45,4 @@ prod-roundcube-postcutover.sql
 
 # personal Claude Code overrides (contains internal hostnames — never commit)
 .claude/settings.local.json
+.DS_Store

@@ -9,9 +9,15 @@ out (don't repeat them), what's shipped, the tooling, and the leading fix direct
 
 ## STATE AS OF 2026-07-22 (read this first)
 
-**Wave 1 + Wave 1.5 + gzip + FPM bump are LIVE ON PROD** (endpoint 5 "apps", stack 36,
-`avuz-mail-roundcube`, version `1.0.1`). Verified healthy: HTTP 200, sessions survived (1830),
-0 fatal errors. Config now on prod:
+**Current prod version is `1.0.3`** (endpoint 5 "apps", stack 36, `avuz-mail-roundcube`; the stack
+name is ambiguous across endpoints — deploy by stack id: `./scripts/deploy.sh -y 36`). Contents and
+caveats are in the table below and the FPM section. Verified healthy after deploy: HTTP 200,
+sessions survived, 0 fatal errors.
+
+The `1.0.1` notes that follow describe the earlier state and are kept for history.
+
+**Wave 1 + Wave 1.5 + gzip + FPM bump were LIVE ON PROD** as version `1.0.1`. Verified healthy:
+HTTP 200, sessions survived (1830), 0 fatal errors. Config on prod at that point:
 - prefetch idempotency + cancel-on-switch serialized warmer + filter run-guard (Wave 1/1.5)
 - body cache TTL 5d, Redis `maxmemory` 512mb, imapproxy `cache_expiration_time` 1800
 - gzip on (verified `Content-Encoding: gzip` on JS + docs)
@@ -22,9 +28,20 @@ Users get the new client JS automatically on next page load via `?s=<mtime>` cac
 manual steps. **Rollback**: redeploy `:1.0.0` (Wave 1+1.5, FPM 20) or app digest
 `@sha256:e2ed97a3…` (pre-Wave). Details: `2026-07-22-PROD-ROLLBACK-ANCHORS.md`.
 
-**Prod host is small: 7GB RAM / 4 CPU.** This bounds every option (FPM workers, Redis size).
+**Prod host: 7.9GB RAM / 20 CPU.** (Corrected 2026-07-22 — the earlier "4 CPU" was wrong.) RAM
+bounds Redis size; CPU has never been the constraint. Measured PHP-FPM worker RSS is ~28MB, mostly
+shared opcache — not the ~80-100MB earlier notes assumed, so worker count is not RAM-bound either.
+The real ceiling is Zoho IMAP latency/concurrency, not local resources.
 
 **What is NOT solved (the reason a brainstorm is still needed):**
+- **Two sessions with ~20-40s `refresh`, continuously.** Found 2026-07-22 via `logs/php-perf.log`:
+  sessions `baffb4b8` (auxadm@grupovidalar.com.br) and `d7ae5086` run ~8 refreshes per 5 minutes at
+  20-40s each, burning roughly a worker between them all day. Every other session refreshes in
+  ~1s. Pre-existing; unrelated to any deploy or to the link outage. This is also the mechanism
+  behind the attachment loss — `baffb4b8`'s 86s refresh is what erased that user's attachments
+  (the session merge fix stops the data loss, not the 40s refresh). NOT yet diagnosed: ruled out
+  is `avuz_filters` (only 3 users have any rules and neither of these two is among them).
+  Next step: `ROUNDCUBE_DEBUG=1` briefly to capture IMAP wire timings for one of these refreshes.
 - Slow **all-folder search** (~13s) — needs Wave 2 (search index), still only specced.
 - Slow **first open of image-heavy mail during prefetch** — the connection/bandwidth/FPM
   contention below. Wave 1.5 helps but doesn't cure it. This is the brainstorm's target.
@@ -122,7 +139,11 @@ cached by the browser). The cost is entirely the **first, cold** open of a not-y
 |---|---|
 | **Wave 1** (prefetch idempotency, run-guard, imapproxy 1800s, Redis 512mb, gzip) | **LIVE ON PROD** (`:1.0.1`) + staging. Validated (list path 84→7 commands). |
 | **Wave 1.5** (cancel-on-switch warmer, serialize batches, busy-yield, TTL 5d) | **LIVE ON PROD** (`:1.0.1`) + staging. Serialization + event-name verified live. Cancel-on-switch not user-confirmed via waterfall (low risk). |
-| **FPM bump** (`pm.max_children` 20→30) | **LIVE ON PROD** (`:1.0.1`). Band-aid; real fix is shorter prefetch. See FPM section. |
+| **FPM bump** (`pm.max_children` 20→30→40) | On prod via `:1.0.3`. **Not a latency lever — see the FPM section; do not raise it further.** Prod container currently runs 30 from a live edit made during the 2026-07-22 outage; the image says 40. A redeploy clears the edit. |
+| **Session three-way merge** (attachment loss on send) | **LIVE ON PROD** (`:1.0.3`). `program/lib/Roundcube/rcube_session.php`, covered by `tests/Framework/SessionRace.php`. |
+| **PHP-free `/healthz`** | **LIVE ON PROD** (`:1.0.3`). Healthcheck no longer mints a session every 30s. |
+| **Per-request timing shim** | **LIVE ON PROD** (`:1.0.3`). `logs/php-perf.log`: start, PHP-only duration, session id, action. Disable with `AVUZ_PERF_LOG=0`. |
+| **FPM slowlog** | Configured but **non-functional**: the container lacks `CAP_SYS_PTRACE`, so FPM logs `failed to ptrace(ATTACH)` and writes no stacks. Needs `cap_add: SYS_PTRACE` in the stack. |
 | **MIME structure batching** spec | **BLOCKED/dead** (see wrong-turn #2). |
 | **Wave 2** (local search index) | Specced (`2026-07-20-roundcube-search-latency-design.md`), untouched. All-folder search still ~13s. Client asked for all-folder-default — gated on Wave 2. |
 | **Prod deploy** | Endpoint 5 "apps", stack 36, version `1.0.1`. Healthy, sessions preserved. Endpoint 9 "peramix-us" has a stale (not-running) stack — ignore. Rollback in `2026-07-22-PROD-ROLLBACK-ANCHORS.md`. |
@@ -230,7 +251,31 @@ Relevant specs/plans in `docs/superpowers/`:
 
 ---
 
-## OPEN: PHP-FPM worker ceiling (pm.max_children = 20) vs 97 users
+## RESOLVED (2026-07-22): the FPM worker ceiling was NOT the bottleneck
+
+**Do not re-raise `pm.max_children` as a latency fix. It was tried and it is not the lever.**
+
+Everything below this heading is kept as the original reasoning, but its premise is wrong. What
+actually happened, measured:
+
+- `pm.max_children` went 20 -> 30 (`1.0.1`) -> 40 (`1.0.3`). At 40, prod ran `refresh` at **1.0s**
+  average for the 45 minutes after deploy — better than the 4.5s baseline earlier that day. The
+  pool was never the constraint.
+- During an unrelated outage the same afternoon, the pool saturated at 40 and looked like the
+  cause. It was not: the site had a **degraded internet link** to Zoho. Dropping workers back to 30
+  did not help, and neither did restarting the container. Latency recovered only when the bad link
+  was removed (11.4s -> 8.1s -> 4.8s -> 1.5s across four 5-minute buckets, no app change).
+- Worker RSS is ~28MB, not the ~80-100MB assumed, so the "40 would risk OOM" note was also wrong.
+
+Lesson for the next investigation: **an exhausted worker pool is a symptom, not a diagnosis.** When
+every action degrades uniformly while request volume stays flat, look downstream (network, Zoho)
+before touching the pool. The per-5-minute breakdown of `logs/php-perf.log` split by session is
+what made this legible; whole-window averages actively misled (they conflate time-of-day load).
+
+The levers that remain real are the ones that REDUCE backend work: incremental prefetch batches,
+the cross-tab pause, fewer/cheaper refreshes.
+
+### Original reasoning (superseded, kept for the record)
 
 `Dockerfile.base`: `pm = dynamic`, `pm.max_children = 20`, start 5, max_spare 8, `memory_limit 256M`.
 

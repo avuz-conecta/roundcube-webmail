@@ -68,7 +68,19 @@ survive the rollback.
 ---
 ## Update: FPM 40 + instrumentation + session fix + /healthz (version 1.0.3)
 
-Built and pushed 2026-07-22, **staging-verified, prod deploy pending an explicit go-ahead**.
+**DEPLOYED to prod 2026-07-22 15:29 UTC and still live.** Verified: HTTP 200, sessions survived
+(3246 -> 3247), evicted_keys 0, 0 PHP fatal/parse errors, 0 nginx errors.
+
+Deploy by **stack id**, not name — `avuz-mail-roundcube` exists on both endpoint 5 (prod, id 36)
+and endpoint 9 (stale, id 65), and deploy.sh refuses an ambiguous name:
+
+    PORTAINER_ENV_FILE=scripts/deploy.prod.env ./scripts/deploy.sh -y 36
+
+**Post-deploy caveat — `pm.max_children` split-brain.** The running container was live-edited to 30
+during the outage below (`sed` on www.conf + `kill -USR2` on the FPM master). The image still says
+40. A restart preserves the edit; a **redeploy silently restores 40**. Since 40 was measured
+healthy, the intent is to keep the image at 40 and let the next deploy clear the edit — but know
+that the running config does not match the image until then.
 
 Digests (these are the rollback anchors for whatever comes next):
 - app:       registry.avuz.app/admin/avuz-roundcube@sha256:a3ecde7400027d4d2cc3de22fd256187ce143b52b67be9ef489154c8bc23a475
@@ -94,3 +106,54 @@ Contents:
 
 NOTE: `:1.0.2` exists in the registry (items 1-4 only, no session fix, no /healthz) and briefly
 held `:latest`. It was never deployed. `1.0.3` supersedes it — do not roll back to 1.0.2.
+
+---
+## INCIDENT 2026-07-22 ~16:20-17:05 UTC — degraded internet link, NOT the deploy
+
+Users reported the webmail "not loading". It was never down: HTTP 200 throughout, just slow enough
+to be unusable (root request peaked at 41s).
+
+**Cause: a bad internet link at the site, since removed by the infra team.** No code or config
+change was responsible, and none was needed to fix it.
+
+### Timeline (from logs/php-perf.log, `refresh`, excluding the two known-slow sessions)
+
+    15:25   1.01s   before deploy
+    15:30   1.02s   deploy of 1.0.3 lands (max_children 40)
+    16:15   0.98s   still healthy — 45 min at 1.0s, vs a 4.5s baseline earlier that day
+    16:20   7.25s   degradation begins
+    16:50  11.44s   worst; container restart here changed nothing
+    16:55   8.10s   bad link removed around here
+    17:00   4.83s
+    17:05   1.54s   recovered
+
+### What this rules out, with evidence
+
+- **The deploy.** 1.0.3 ran at 1.0s for 45 minutes after landing — better than the 4.5s baseline.
+  Degradation began 51 minutes later, at a sharp boundary.
+- **Worker exhaustion.** Dropping `pm.max_children` 40 -> 30 did not help. The pool saturating was
+  a symptom of slow upstream calls, not the cause.
+- **Accumulated app state.** A full container restart (fresh FPM master, fresh workers, fresh
+  opcache) changed nothing.
+- **Load.** Request volume was flat (~100 per 5 min) and then FELL as users gave up. Same requests,
+  each ~8x slower.
+- **CPU/RAM.** Load 2.98 on 20 cores; 3.9GB free.
+- **Zoho throttling.** Zero BYE/blocked/limit messages.
+
+Positive signal: PHP itself stayed fast throughout (root request 0.014s, which does no IMAP work)
+while IMAP-touching actions were 5-10x slow. The time was on the wire.
+
+### Diagnostic lessons (worth more than the incident)
+
+1. **Never diagnose from whole-window averages.** The first BEFORE/AFTER comparison split the day
+   at the deploy — "before" was 11 hours including quiet overnight, "after" was one peak hour. It
+   showed every action 2-12x slower and pointed straight at the deploy. It was an artifact of
+   time-of-day. Bucket by 5 or 60 minutes and compare like with like.
+2. **A saturated worker pool is a symptom.** Two hypotheses were formed and both were wrong
+   (worker-count congestion collapse; the avuz_filters refresh hook). What settled it was
+   per-5-minute, per-session data, not reasoning about mechanisms.
+3. **An instantaneous reading right after a restart or reload proves nothing** — a cold pool with
+   no traffic always looks fast. It misled twice. Wait for a full bucket under real traffic.
+4. **Attribute latency per session.** `logs/php-perf.log` (session id + PHP-only duration) is what
+   separated "two users are pathological" from "the system is slow", and it is the only reason the
+   two 40s-refresh sessions are now visible at all.
