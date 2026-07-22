@@ -13,3 +13,14 @@ is preserved as :1.0.0 regardless of future :latest overwrites.
 
 Redis change: prod stack redis command `--maxmemory 128mb` -> `512mb` (manual Portainer stack edit).
 Rollback that = set it back to 128mb in the stack and redeploy.
+
+---
+## DEPLOYED 2026-07-22 (build 0ed140938, version 1.0.0)
+Wave 1 + 1.5 live on prod (endpoint 5, stack 36). Verified:
+- prefetch warmer 4 markers, run_guard present, TTL 5d
+- Redis maxmemory 536870912 (512mb), sessions survived (1778), evicted_keys 0
+- imapproxy cache_expiration_time 1800
+- roundcube healthy, HTTP 200, 0 fatal/parse errors, perf instrumentation writing
+Users get new prefetch.js on next page load via ?s=1784681400 (a mtime prod never served before,
+so all browsers fetch fresh). No manual user action needed.
+Rollback: redeploy app @sha256:e2ed97a3... (or the images are also tagged :1.0.0 for the NEW build).
