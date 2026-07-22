@@ -21,7 +21,10 @@ class avuz_prefetch extends rcube_plugin
     public $task = 'mail';
 
     private const MAX_UIDS = 10;
-    private const TTL      = '10d';
+    // 5 days, not 10: halves the accumulated body working set so Redis stays well
+    // under maxmemory and allkeys-lru never evicts a session. A message untouched
+    // for 5 days simply re-warms once on next open. See the Wave 1.5 design doc.
+    private const TTL      = '5d';
 
     /** @var rcube_cache|false|null */
     private $bodyCache;
