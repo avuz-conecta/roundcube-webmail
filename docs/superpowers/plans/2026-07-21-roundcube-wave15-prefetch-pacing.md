@@ -22,7 +22,7 @@
 
 ## Measurement is the point of this wave
 
-The spec's acceptance criterion is: **foreground request latency must be independent of whether prefetch is running.** That is only checkable with per-action latency percentiles captured before and after, over comparable real usage. Task 1 builds that instrumentation and MUST be deployed and collecting a baseline before Tasks 3 and 4 change any behavior. Capturing the baseline after the fact would repeat exactly the mistake Wave 1 made.
+The spec's acceptance criterion is: **foreground request latency must be independent of whether prefetch is running.** The decisive test is a within-window correlation — in one dataset, is `list`/`show` latency the same when a prefetch overlaps it as when none does? Task 1 builds the instrumentation for exactly that (Step 3), and also a baseline before Tasks 3-4 land so the correlation can be shown collapsing. Capturing nothing until after the change would repeat Wave 1's mistake.
 
 ---
 
@@ -31,13 +31,15 @@ The spec's acceptance criterion is: **foreground request latency must be indepen
 **Files:**
 - Modify: `docker/nginx.conf` (add `log_format` at file top, `access_log` inside `server`)
 - Create: `scripts/perf-percentiles.awk`
+- Create: `scripts/perf-concurrency.awk`
 - Create: `scripts/perf-report.sh`
 
 **Interfaces:**
 - Consumes: nothing.
 - Produces: a `nginx-perf.log` on the running container in the format
-  `<request_time> <upstream_response_time> <status> <method> <request_uri>`, and
-  `scripts/perf-report.sh <container>` which prints p50/p95/p99 request_time per Roundcube `_action`.
+  `<msec> <request_time> <upstream_response_time> <status> <method> <request_uri>`, and
+  `scripts/perf-report.sh <container> [actions|concurrency]` — `actions` prints p50/p95/p99 per
+  Roundcube `_action`; `concurrency` splits `list`/`show` latency by whether a prefetch overlapped.
 
 - [ ] **Step 1: Add the log format and access log to nginx.conf**
 
@@ -51,9 +53,13 @@ At the very top of `docker/nginx.conf`, before the `server {` line, add:
 
 ```nginx
 # Per-request timing for latency percentiles (Wave 1.5 measurement).
+# $msec is the request-END epoch (s.ms); with $request_time the aggregator can
+# reconstruct each request's [start,end] interval and mark whether a
+# plugin.avuz_prefetch request overlapped it — the within-window correlation the
+# acceptance criterion actually needs, not a cross-window before/after.
 # request_time = full request incl. network; upstream_response_time = PHP-FPM only.
-# request_uri carries _action even for POSTs, so the aggregation can bucket by action.
-log_format perf '$request_time $upstream_response_time $status $request_method $request_uri';
+# request_uri carries _action even for POSTs, so the aggregation buckets by action.
+log_format perf '$msec $request_time $upstream_response_time $status $request_method $request_uri';
 ```
 
 Inside the `server {` block, immediately after the `index index.php;` line (line 5), add:
@@ -63,7 +69,9 @@ Inside the `server {` block, immediately after the `index index.php;` line (line
 ```
 
 That path is the existing logs volume, readable via `scripts/portainer-exec.sh` the same way
-`imap.log` is.
+`imap.log` is. Note this server-level `access_log` overrides the http-level default
+(`/var/log/nginx/access.log`) for this server — that default log is an unused, ephemeral container
+path, so nothing is lost, but it is a deliberate change, not an accident.
 
 - [ ] **Step 2: Write the percentile aggregator**
 
@@ -72,12 +80,12 @@ Create `scripts/perf-percentiles.awk`:
 ```awk
 #!/usr/bin/awk -f
 # Reads nginx "perf" log lines on stdin:
-#   <request_time> <upstream_response_time> <status> <method> <request_uri>
+#   <msec> <request_time> <upstream_response_time> <status> <method> <request_uri>
 # Buckets request_time by the Roundcube _action in the URI and prints
 # count / p50 / p95 / p99 / max per action, slowest p95 first.
 {
-    rt = $1 + 0
-    uri = $5
+    rt = $2 + 0
+    uri = $6
     act = "other"
     if (match(uri, /_action=[^&]+/)) {
         act = substr(uri, RSTART + 8, RLENGTH - 8)
@@ -115,43 +123,106 @@ END {
 }
 ```
 
-- [ ] **Step 3: Write the report wrapper**
+- [ ] **Step 3: Write the concurrency aggregator — the actual acceptance test**
+
+The acceptance criterion ("foreground latency independent of whether prefetch is running") is a
+within-window correlation, not a cross-window comparison: split `list`/`show` requests by whether a
+`plugin.avuz_prefetch` request overlapped them in time, in the SAME dataset. This controls for
+usage differences that a before/after comparison cannot.
+
+Create `scripts/perf-concurrency.awk`:
+
+```awk
+#!/usr/bin/awk -f
+# Reads nginx "perf" log lines:
+#   <msec> <request_time> <upstream_response_time> <status> <method> <request_uri>
+# Reconstructs each request's [start,end] interval (start = msec - request_time),
+# then splits list/show request_time into "during prefetch" vs "prefetch idle" by
+# whether any plugin.avuz_prefetch request's interval overlapped it. Prints
+# count/p50/p95/p99 per bucket. If the two buckets for an action match, foreground
+# latency is independent of prefetch — the criterion is met.
+{
+    end = $1 + 0; rt = $2 + 0; start = end - rt
+    uri = $6; act = "other"
+    if (match(uri, /_action=[^&]+/)) act = substr(uri, RSTART+8, RLENGTH-8)
+    if (act == "plugin.avuz_prefetch") { pf++; pf_s[pf] = start; pf_e[pf] = end; next }
+    if (act == "list" || act == "show") { fg++; fa[fg] = act; fs[fg] = start; fe[fg] = end; fr[fg] = rt }
+}
+function pct(a, cnt, p,   idx) { idx = int((p/100.0)*cnt + 0.5); if (idx<1) idx=1; if (idx>cnt) idx=cnt; return a[idx] }
+END {
+    for (k = 1; k <= fg; k++) {
+        ov = 0
+        for (p = 1; p <= pf; p++) if (fs[k] < pf_e[p] && pf_s[p] < fe[k]) { ov = 1; break }
+        b = fa[k] (ov ? " |during-prefetch" : " |prefetch-idle")
+        n[b]++; t[b, n[b]] = fr[k]
+    }
+    printf "%-26s %7s %8s %8s %8s\n", "bucket", "count", "p50", "p95", "p99"
+    for (b in n) {
+        c = n[b]; for (i=1;i<=c;i++) col[i]=t[b,i]
+        for (i=2;i<=c;i++){ v=col[i]; j=i-1; while(j>=1&&col[j]>v){col[j+1]=col[j];j--} col[j+1]=v }
+        printf "%-26s %7d %8.3f %8.3f %8.3f\n", b, c, pct(col,c,50), pct(col,c,95), pct(col,c,99)
+        delete col
+    }
+}
+```
+
+- [ ] **Step 4: Write the report wrapper**
 
 Create `scripts/perf-report.sh`:
 
 ```bash
 #!/bin/bash
-# Print per-action latency percentiles from a container's nginx-perf.log.
-#   ./scripts/perf-report.sh <container> [tail-lines]
-# For staging:  PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 ./scripts/perf-report.sh avuz-mail-roundcube-2-roundcube-1
-# For prod:     PORTAINER_ENV_FILE=scripts/deploy.prod.env PORTAINER_ENDPOINT=5 ./scripts/perf-report.sh <prod-container>
+# Per-action latency percentiles (default) or prefetch-concurrency split, from a
+# container's nginx-perf.log.
+#   ./scripts/perf-report.sh <container> [actions|concurrency] [tail-lines]
+# staging:  PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 ./scripts/perf-report.sh avuz-mail-roundcube-2-roundcube-1
+#           ... avuz-mail-roundcube-2-roundcube-1 concurrency
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTAINER="${1:?usage: perf-report.sh <container> [tail-lines]}"
-LINES="${2:-100000}"
-AWK_BODY="$(cat "$SCRIPT_DIR/perf-percentiles.awk")"
+CONTAINER="${1:?usage: perf-report.sh <container> [actions|concurrency] [tail-lines]}"
+MODE="${2:-actions}"
+LINES="${3:-100000}"
+case "$MODE" in
+  actions)     AWK_FILE="perf-percentiles.awk" ;;
+  concurrency) AWK_FILE="perf-concurrency.awk" ;;
+  *) echo "mode must be 'actions' or 'concurrency'" >&2; exit 2 ;;
+esac
+AWK_BODY="$(cat "$SCRIPT_DIR/$AWK_FILE")"
 PORTAINER_ENV_FILE="${PORTAINER_ENV_FILE:-$SCRIPT_DIR/deploy.env}" \
 PORTAINER_ENDPOINT="${PORTAINER_ENDPOINT:-}" \
   "$SCRIPT_DIR/portainer-exec.sh" -u www-data "$CONTAINER" \
   sh -c "tail -n $LINES /var/www/roundcube/logs/nginx-perf.log | awk '$AWK_BODY'"
 ```
 
-- [ ] **Step 4: Validate locally**
+- [ ] **Step 5: Validate both aggregators locally**
 
 ```bash
 chmod +x scripts/perf-report.sh
+# actions table (fields: msec request_time upstream status method uri)
 printf '%s\n' \
-  '0.512 0.480 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
-  '2.104 2.090 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
-  '0.031 0.028 200 GET /?_task=mail&_action=getunread' \
-  '69.2 69.1 200 POST /?_task=mail&_action=plugin.avuz_prefetch' \
+  '1000.5 0.512 0.480 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
+  '1002.0 2.104 2.090 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
+  '1002.3 0.031 0.028 200 GET /?_task=mail&_action=getunread' \
+  '1060.0 69.2 69.1 200 POST /?_task=mail&_action=plugin.avuz_prefetch' \
   | awk -f scripts/perf-percentiles.awk
+echo '---'
+# concurrency split: a prefetch runs [start=1060-69.2=990.8 .. end=1060].
+# The 1002.0 list (start ~999.9) overlaps it -> during-prefetch; the 1000.5 list
+# (end 1000.5, start ~999.99) also overlaps. Craft one clearly-outside sample.
+printf '%s\n' \
+  '1060.0 69.2 69.1 200 POST /?_task=mail&_action=plugin.avuz_prefetch' \
+  '1002.0 2.104 2.090 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
+  '2000.0 0.400 0.380 200 POST /?_task=mail&_action=list&_mbox=INBOX' \
+  '1001.0 0.900 0.880 200 GET /?_task=mail&_action=show&_uid=5' \
+  | awk -f scripts/perf-concurrency.awk
 ```
 
-Expected: a table with a `list` row (count 2), a `getunread` row, and a `plugin.avuz_prefetch`
-row, sorted slowest-p95 first. Confirm the numbers are plausible (list p95 ≈ 2.104).
+Expected (actions): a `list` row count 2 p95≈2.104, plus `getunread` and `plugin.avuz_prefetch`
+rows. Expected (concurrency): `list |during-prefetch` (the 1002.0 sample, overlapping the
+990.8–1060 prefetch) and `list |prefetch-idle` (the 2000.0 sample, well outside), and a
+`show |during-prefetch` row (1001.0 overlaps). Confirm the split lands samples in the right buckets.
 
-- [ ] **Step 5: Validate the nginx config parses**
+- [ ] **Step 6: Validate the nginx config parses**
 
 ```bash
 docker run --rm -v "$PWD/docker/nginx.conf:/etc/nginx/http.d/default.conf:ro" nginx:alpine nginx -t
@@ -161,10 +232,10 @@ Expected: `syntax is ok` / `test is successful`. This mounts the file at its rea
 the `log_format`-at-top placement is validated in the correct context. If `docker run` is denied
 in this environment, skip and rely on the staging check in Task 5 Step 1.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add docker/nginx.conf scripts/perf-percentiles.awk scripts/perf-report.sh
+git add docker/nginx.conf scripts/perf-percentiles.awk scripts/perf-concurrency.awk scripts/perf-report.sh
 git commit -m "perf(obs): per-action nginx latency instrumentation
 
 Adds a 'perf' log_format capturing request_time and upstream_response_time,
@@ -633,19 +704,30 @@ After the switch, the `SELECT` lines in prefetch requests should be the NEW fold
 abandoned one. At most one straggler request for the old folder (the batch already in flight at the
 moment of the switch) may complete — more than one means the old run is not being superseded.
 
-- [ ] **Step 5: Let the "after" window accumulate, then compare**
+- [ ] **Step 5: Let the "after" window accumulate, then judge on the correlation**
 
-Same usage pattern and duration as Step 2. Then:
+Same usage pattern and duration as Step 2. Then capture both views:
 
 ```bash
 PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
-  ./scripts/perf-report.sh avuz-mail-roundcube-2-roundcube-1
+  ./scripts/perf-report.sh avuz-mail-roundcube-2-roundcube-1 actions
+PORTAINER_ENV_FILE=scripts/deploy.env PORTAINER_ENDPOINT=3 \
+  ./scripts/perf-report.sh avuz-mail-roundcube-2-roundcube-1 concurrency
 ```
 
-Record as "After (serialized + busy-yield)". **Acceptance criterion:** p95 of `list` and `show`
-should be materially lower and closer to their idle values than in the baseline — foreground
-latency no longer dragged up by concurrent prefetch. Prefetch's own p95 may rise (serialized is
-slower wall-clock); that is expected and acceptable.
+**The acceptance verdict is the `concurrency` split, not the before/after.** In the after-window,
+`list |during-prefetch` p95 should be ≈ `list |prefetch-idle` p95 (same for `show`). If they match,
+foreground latency is independent of whether prefetch is running — the criterion is met, proven from
+one clean dataset that controls for usage. A large gap means prefetch is still contending; the
+pacing did not fully work, and Step 7's FPM finding likely explains why.
+
+Run the **same `concurrency` split on the baseline log** too (`perf-report.sh ... concurrency`
+against the Step 2 data). The expected story: baseline shows a large `during-prefetch` vs
+`prefetch-idle` gap (old concurrent prefetch drags foreground up); after shows that gap collapsed.
+
+The two-window `actions` p50/p95 comparison is a **sanity check only** — it is confounded by
+differing usage between windows, so it corroborates but never decides. Prefetch's own p95 may rise
+(serialized is slower wall-clock); that is expected and fine.
 
 - [ ] **Step 6: Verify coverage did not regress**
 
