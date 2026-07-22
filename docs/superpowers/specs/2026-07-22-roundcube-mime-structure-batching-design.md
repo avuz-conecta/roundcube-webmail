@@ -24,13 +24,34 @@ a sequential round trip at ~200ms to Zoho: **~4-5 seconds of pure structure walk
 intrinsic to opening it cold.** The built structure is then cached in Postgres (`messages_cache`),
 so the second open is instant — the cost is entirely on the first, cold build.
 
-### Evidence-integrity note
+### Clean single-open measurement (verified)
 
-An earlier draft of this spec cited "one 16s open, 42 commands, 21 mime fetches." That trace was
-**contaminated** — it was a 6-message prefetch batch (UIDs 147-151, 166) interleaved with a
-foreground open in the shared `imap.log`, misread as a single open. The corrected evidence above
-is per-UID MIME round-trip counts, which are unaffected by interleaving. The conclusion holds —
-complex messages do 20+ structure round trips — but on sound data.
+A controlled cold open was captured with prefetch idle and the structure cache flushed for the
+account, so the trace is uncontaminated. The `preview` (structure-build) request for a real 13-part
+invoice message issued, in order, on one connection:
+
+```
+A0005  UID FETCH 162 (... BODYSTRUCTURE ...)     ← build structure
+A0006  UID FETCH 162 (BODY.PEEK[2.MIME])
+A0007  UID FETCH 162 (BODY.PEEK[3.MIME])
+ ...   (one command per part, sequential)
+A0017  UID FETCH 162 (BODY.PEEK[13.MIME])        ← 12 consecutive MIME-header fetches
+A0018  UID FETCH 162 (BODY.PEEK[1.2])            ← body
+```
+
+**12 consecutive single-section `BODY.PEEK[N.MIME]` commands** inside one open request — the
+`get_structure`/`structure_part` walk, NOT batched (the current per-level batching fails to catch
+them, which is exactly the "spread across levels" case the `@TODO` names). At ~200ms each that is
+~2.4s of the open. The fix collapses those 12 into **one** `UID FETCH (BODY.PEEK[2.MIME] …
+BODY.PEEK[13.MIME])`.
+
+**Measured saving on this foreground open: ~11 round trips ≈ ~2.2s.** The rest of the open (~8s
+wall-clock) was 10+ parallel part-content fetches (the images/PDFs) — inherent, correctly untouched
+by this fix.
+
+An earlier draft cited "one 16s open, 42 commands." That trace was **contaminated** — a 6-message
+prefetch batch interleaved with an open in the shared `imap.log`, misread as one open. Discarded in
+favor of the clean measurement above.
 
 ### This fixes BOTH of the two real problems
 
@@ -45,15 +66,18 @@ Two distinct costs: **contention** (opens 1.8× slower while prefetch runs) and 
 structure walk (idle opens still hit 17.93s). This one fix addresses both, because prefetch runs
 the *same* `get_structure` walk on every message it warms:
 
-- **Foreground cold opens** drop by the removed round trips (~4-5s on a complex message).
-- **Prefetch batches shrink dramatically.** A cold batch of 8 messages × ~15 MIME round trips ≈
-  120 round trips ≈ the observed **27s** cold batch. Collapse each message to 1-2 round trips and
-  the batch drops to ~16 round trips ≈ **~4s**. That directly shrinks the contention window — the
-  1.8× slowdown exists *because* prefetch holds connections for 27s; make batches ~4s and the
-  window largely closes.
+- **Foreground cold opens** drop by the removed round trips — **measured ~2.2s** on the 13-part
+  message above (12 MIME round trips → 1).
+- **Prefetch batches shrink.** Prefetch builds `rcube_message` per warmed UID, so it pays the same
+  ~12-round-trip walk per complex message. A cold batch of 8 such messages sheds ~88 round trips
+  (~18s); the observed 27s cold batches would drop toward the low single digits, closing the
+  contention window — the 1.8× slowdown exists *because* prefetch holds connections for tens of
+  seconds.
 
-So the leverage is higher than a per-open saving alone: the same change cuts intrinsic open cost
-**and** the contention that Wave 1.5's pacing could only partly mitigate.
+So the leverage is higher than a per-open saving alone: the same change cuts foreground open cost
+(~2.2s, verified) **and** the contention that Wave 1.5's pacing could only partly mitigate. Be
+honest about the split — the per-open saving is real but modest; the prefetch-batch shrink is where
+most of the value is.
 
 ## Root cause
 
