@@ -92,9 +92,23 @@
     runActive = true;
 
     var i = 0;
+    var deferrals = 0;
+    var MAX_DEFERRALS = 20; // bounded starvation guard (~6s), then proceed anyway
     (function sendNext() {
       if (myToken !== runToken) return;              // superseded by a newer folder
       if (i >= uids.length) { runActive = false; detachRun(); return; }
+
+      // Lose races against the user: if a locked foreground request is in flight,
+      // wait and retry rather than compete for a backend connection. Bounded so a
+      // permanently busy UI eventually gets prefetched rather than never. The
+      // myToken check above still fires first, so a folder switch during a defer
+      // still supersedes correctly.
+      if (rcmail.busy && deferrals < MAX_DEFERRALS) {
+        deferrals++;
+        window.setTimeout(sendNext, 300);
+        return;
+      }
+      deferrals = 0;
 
       var batch = uids.slice(i, i + BATCH);
       i += BATCH;
