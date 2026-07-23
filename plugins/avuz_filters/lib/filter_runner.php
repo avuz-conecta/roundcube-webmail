@@ -98,12 +98,17 @@ class avuz_filter_runner
         // execute — the next pass would restart from the stale watermark and
         // re-match the same UIDs, causing forward-only rules to send duplicate
         // outbound email. Do not move this back above set_state().
-        try {
-            foreach (array_keys($filled) as $filled_folder) {
+        //
+        // Each folder is guarded independently: a failure pushing one folder's
+        // badge (e.g. it was renamed/deleted between the move and the report, or
+        // hits a per-folder STATUS/ACL error) must not skip the badge push for the
+        // other folders filed into during this pass.
+        foreach (array_keys($filled) as $filled_folder) {
+            try {
                 rcmail_action_mail_index::send_unread_count($filled_folder, true);
+            } catch (\Throwable $e) {
+                rcube::write_log('errors', 'avuz_filters: unread count push failed for folder ' . $filled_folder . ': ' . $e->getMessage());
             }
-        } catch (\Throwable $e) {
-            rcube::write_log('errors', 'avuz_filters: unread count push failed: ' . $e->getMessage());
         }
 
         return $acted;
