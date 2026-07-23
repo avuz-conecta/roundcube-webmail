@@ -177,6 +177,63 @@ class rcube_imap_search_job /* extends Stackable */
     }
 
     /**
+     * The folder this job searches.
+     *
+     * @return string Folder name
+     */
+    public function get_folder()
+    {
+        return $this->folder;
+    }
+
+    /**
+     * The exact criteria text handed to the IMAP SEARCH command.
+     *
+     * Extracted so the pipelined and the serial path cannot diverge on the
+     * skip_deleted prefix or the charset handling.
+     *
+     * @return string Criteria, including any CHARSET prefix
+     */
+    public function get_criteria()
+    {
+        $criteria = $this->search;
+        $charset  = $this->charset;
+
+        if ($this->worker->options['skip_deleted'] && !preg_match('/UNDELETED/', $criteria)) {
+            $criteria = 'UNDELETED '.$criteria;
+        }
+
+        // unset CHARSET if criteria string is ASCII, this way
+        // SEARCH won't be re-sent after "unsupported charset" response
+        if ($charset && $charset != 'US-ASCII' && is_ascii($criteria)) {
+            $charset = 'US-ASCII';
+        }
+
+        return ($charset && $charset != 'US-ASCII' ? "CHARSET $charset " : '') . $criteria;
+    }
+
+    /**
+     * True once a real result has been stored, by either path.
+     *
+     * @return bool
+     */
+    public function has_result()
+    {
+        return empty($this->result->incomplete);
+    }
+
+    /**
+     * Stores a result obtained outside run(), i.e. from a pipelined batch.
+     *
+     * @param rcube_result_index $result Search result for this job's folder
+     */
+    public function set_result($result)
+    {
+        $result->incomplete = false;
+        $this->result       = $result;
+    }
+
+    /**
      * Executes the IMAP search
      */
     public function run()
@@ -241,8 +298,7 @@ class rcube_imap_search_job /* extends Stackable */
         }
 
         if (empty($messages) || $messages->is_error()) {
-            $messages = $imap->search($this->folder,
-                ($charset && $charset != 'US-ASCII' ? "CHARSET $charset " : '') . $criteria, true);
+            $messages = $imap->search($this->folder, $this->get_criteria(), true);
 
             // Error, try with US-ASCII (some servers may support only US-ASCII)
             if ($messages->is_error() && $charset && $charset != 'US-ASCII') {
