@@ -120,7 +120,16 @@ class rcube_imap_search
      */
     protected function run_pipelined($sort_field, $threading)
     {
-        if (empty($this->jobs) || $threading || $sort_field || getenv('AVUZ_PIPELINED_SEARCH') === '0') {
+        // 'arrival' is the server's natural (UID/sequence) order, which a plain
+        // UID SEARCH already returns — so the pipeline can serve it, and doing so
+        // skips the per-folder SORT the serial path would otherwise run. Against
+        // Zoho (no SORT capability) that SORT is a simulated fetch-all-headers-
+        // and-sort, the expensive path this whole optimisation exists to avoid.
+        // A real header sort (date/subject/from/to/cc/size) genuinely needs it, so
+        // decline only for those — not for 'arrival' or no sort.
+        $needs_header_sort = $sort_field && $sort_field !== 'arrival';
+
+        if (empty($this->jobs) || $threading || $needs_header_sort || getenv('AVUZ_PIPELINED_SEARCH') === '0') {
             return;
         }
 
