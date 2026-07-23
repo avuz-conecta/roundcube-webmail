@@ -209,6 +209,34 @@ recreate the original problem. Exceeding the cap truncates and logs a warning.
 - **Clear the two users' stored preference, change nothing else** — any user can re-enable it and
   reproduce the outage.
 
+## Trade-offs found in final review (recorded, not fixed)
+
+**1. The two opted-in users have NO filter rules.** Verified against prod: `auxadm@` and
+`atendimento@` both return 0 rows from `avuz_filters`. The spec's justification for narrowing —
+"everything else is a folder the user made themselves, which our filters already report on" — does
+not hold for them, because nothing of ours files into their folders.
+
+Judgement, with the evidence behind it: their folders (`Financeiro/Maiara`, `PBA Projetos/Ana
+Paula`, `Free Flow - PBE`, `Gustavo`, `Modelos`, …) are manual organisational folders. Mail reaches
+them when the user drags it there, and `move.php:128` already pushes the badge on that path. The
+only automatic delivery outside INBOX on this system is Zoho's own classification, which lands in
+`Spam`/`Newsletter`/`Notification` — all on the allowlist. So the practical exposure is small. It
+is NOT zero: a Zoho-side rule we cannot see, filing into a non-allowlist folder, would go
+unannounced for those two users. Accepted knowingly rather than discovered later.
+
+**2. Stale badges now survive a page reload, for opted-in users.** `$_SESSION['unseen_count']` is
+written but never invalidated (only `folder_purge.php` zeroes an entry). Previously an opted-in
+user's F5 forced `getunread` to recount every folder and self-heal any drift; with the flag
+neutralised, `$unseen_old !== null` from the second page load onward, so a stale badge stays stale
+until logout. `session_lifetime` here is one week.
+
+**3. `getunread`'s cold pass is still unbounded.** `getunread.php:42-49` skips the cheap branch
+whenever `$unseen_old === null`, regardless of the flag, and `app.js:429` fires it on every full
+mail page load. So the 107-folder user still pays ~107 forced UNSEEN counts (~20s) on the FIRST
+mail page load of each session. The claim that neutralising the flag puts both paths on their cheap
+branch is true from load #2, not load #1. Still a large improvement — was every load, now once per
+session — but the first paint stays slow.
+
 ## Failure modes
 
 | Case | Behavior |
