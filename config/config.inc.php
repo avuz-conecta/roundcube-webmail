@@ -50,9 +50,24 @@ $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
 $config['smtp_timeout'] = 15;
 
-// -- Special folders — Zoho uses IMAP SPECIAL-USE flags with localized (pt_BR)
-// names. Match them explicitly so Roundcube uses the folders that actually exist
+// -- Special folders — Zoho does NOT advertise SPECIAL-USE (capability capture
+// 2026-07-22: IMAP4rev1 UNSELECT CHILDREN XLIST NAMESPACE IDLE MOVE ID AUTH=PLAIN
+// SASL-IR AUTH=XOAUTH2 UIDPLUS ESEARCH LIST-EXTENDED LIST-STATUS WITHIN LITERAL-
+// ACL CONDSTORE). Roundcube's per-user auto-detection in
+// rcube_imap::get_special_folders() is gated on SPECIAL-USE, so it never runs for
+// Zoho and these global names are what every Zoho user gets. They provision as
+// localized pt_BR names; set them explicitly so Roundcube uses folders that exist
 // instead of trying to CREATE "Drafts"/"Sent"/… (which fails: "Folder exists").
+//
+// Verified against all 55 cached Zoho folder lists on prod (2026-07-22): every
+// account has Rascunho, Enviadas and Spam. "Junk", where present, is an EXTRA
+// user-level folder sitting in the alphabetical block, not Zoho's spam folder —
+// do not switch junk_mbox to it. Servers that do advertise SPECIAL-USE (the
+// digrepal provider) auto-detect per user and ignore these values entirely.
+// Latent risk (deferred, nobody affected yet): a Zoho account provisioned in a
+// non-pt_BR locale would silently get the wrong names, with no per-user detection
+// to save it. Full analysis and the XLIST-based fix:
+// docs/superpowers/specs/2026-07-22-special-folder-detection-concern.md
 $config['drafts_mbox']            = 'Rascunho';
 $config['sent_mbox']              = 'Enviadas';
 $config['trash_mbox']             = 'Lixeira';

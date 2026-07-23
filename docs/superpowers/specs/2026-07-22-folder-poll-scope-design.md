@@ -68,9 +68,14 @@ higher):
 hand-creates those on 16 mailboxes. They are **Zoho's automatic classification folders**, filled
 server-side at delivery. Mail lands there without touching INBOX and without our filters running.
 
-Both `Spam` (17) and `Junk` (6) exist — Zoho provisions different names per account. Tracked
-separately: `config.inc.php:59` hardcodes `junk_mbox = 'Spam'`, wrong for the 6 users whose folder
-is `Junk`.
+Both `Spam` (17) and `Junk` (6) appear in the survey. **Correction (2026-07-22, verified):** this
+is not "Zoho provisions different names per account". Dumping the full cached IMAP folder list
+(Redis `<uid>:IMAP:mailboxes.*`) for all 55 Zoho users shows **every one of them has `Spam`**, in
+Zoho's system-folder block (`INBOX`, `Rascunho`, `Enviadas`, `Spam`, `Lixeira`, `Archive`). `Junk`,
+where it exists, sits in the alphabetical user-folder block and **coexists with `Spam`** — it is an
+extra folder, not an alternative name. Zero users have `Junk` without `Spam`. The `cache_index`
+survey only counts folders a user has *opened*, so it cannot distinguish the two cases; the folder
+lists can. `config.inc.php:59`'s `junk_mbox = 'Spam'` is therefore correct for every current user.
 
 Everything else in the survey is either a system folder that never receives unread mail
 (`Enviadas`, `Lixeira`, `Rascunho`, `Archive`) or clearly user-created (`Clientes`, `PMOC`).
