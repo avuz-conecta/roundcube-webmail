@@ -66,29 +66,18 @@ class avuz_poll_scope extends rcube_plugin
      *       walked EVERY subscribed folder. This is the expensive case we exist
      *       to bound, so we REPLACE the list with {current, INBOX} plus the
      *       allowlist, same as before.
-     *   (b) $args['all'] === false, an active search is open — the list is
-     *       exactly the folders that search covers (check_recent.php:55; for a
-     *       single-folder search, get_parameters('MAILBOX') returns a plain
-     *       string, which core casts to array — this branch is not limited to
-     *       all-folders searches), so new matching mail in any of them can
-     *       appear in the results. Removing folders here silently stales the
-     *       search results.
+     *   (b) $args['all'] === false, an all-folders SEARCH is open — the list is
+     *       exactly the folders that search covers, so new matching mail in any
+     *       of them can appear in the results. Removing folders here silently
+     *       stales the search results.
      *   (c) $args['all'] === false, no search — the list is already just
      *       {current, INBOX}.
      *
      * Cases (b) and (c) are both core's own deliberate, already-bounded choice —
-     * we must not strip anything out of $args['folders'] in either. In the false
-     * case, adding the user's allowlist on top is ALL we do; we never remove
-     * from what core built. Do not "simplify" this back to an unconditional
-     * replace: that's the bug this comment exists to prevent.
-     *
-     * Accepted trade-off: the manual "Check for new mail" request also carries
-     * _search (app.js check_recent_params(), ~line 9797), and check_recent.php:42
-     * forces check_all true for any non-'refresh' action — so an open search plus
-     * a manual check takes branch (a), not (b), for that one request: the
-     * search's folders aren't polled and refresh_search() doesn't fire. This is
-     * bounded staleness, not a bug — the next periodic refresh takes branch (b)
-     * and picks it up. Do not "fix" this by weakening the bound.
+     * we must not strip anything out of $args['folders'] in either. We only ever
+     * ADD the user's allowlist on top when $args['all'] is false. Do not
+     * "simplify" this back to an unconditional replace: that's the bug this
+     * comment exists to prevent.
      */
     function bound_folders($args)
     {
