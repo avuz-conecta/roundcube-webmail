@@ -216,13 +216,19 @@ recreate the original problem. Exceeding the cap truncates and logs a warning.
 "everything else is a folder the user made themselves, which our filters already report on" — does
 not hold for them, because nothing of ours files into their folders.
 
-Judgement, with the evidence behind it: their folders (`Financeiro/Maiara`, `PBA Projetos/Ana
-Paula`, `Free Flow - PBE`, `Gustavo`, `Modelos`, …) are manual organisational folders. Mail reaches
-them when the user drags it there, and `move.php:128` already pushes the badge on that path. The
-only automatic delivery outside INBOX on this system is Zoho's own classification, which lands in
-`Spam`/`Newsletter`/`Notification` — all on the allowlist. So the practical exposure is small. It
-is NOT zero: a Zoho-side rule we cannot see, filing into a non-allowlist folder, would go
-unannounced for those two users. Accepted knowingly rather than discovered later.
+**RESOLVED by the service owner, 2026-07-22.** This is a managed tenant: we administer their Zoho
+domain and the users have no access to the Zoho interface, so no user-created server-side rule can
+exist. The only automatic delivery outside INBOX is Zoho's own classification, which lands in
+`Spam`/`Newsletter`/`Notification` — all on the allowlist.
+
+That closes the gap rather than merely bounding it. Their folders (`Financeiro/Maiara`, `PBA
+Projetos/Ana Paula`, `Free Flow - PBE`, `Gustavo`, `Modelos`, …) are manual organisational folders;
+mail reaches them when the user drags it there, and `move.php:128` already pushes the badge on that
+path.
+
+This assumption is worth re-checking if a future tenant is ever given Zoho console access — at that
+point users could create server-side rules filing into arbitrary folders, and the allowlist would
+no longer cover every automatic-delivery path.
 
 **2. Stale badges now survive a page reload, for opted-in users.** `$_SESSION['unseen_count']` is
 written but never invalidated (only `folder_purge.php` zeroes an entry). Previously an opted-in
