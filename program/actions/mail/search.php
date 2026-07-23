@@ -117,6 +117,11 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         }
 
         $_SESSION['search_request']  = $search_request;
+        // AVUZ PATCH — start the clock for the total search budget. A request
+        // without _continue is a NEW logical search, so it resets it.
+        if (empty($_GET['_continue'])) {
+            $_SESSION['search_start'] = time();
+        }
         $_SESSION['search_scope']    = $scope;
         $_SESSION['search_interval'] = $interval;
         $_SESSION['search_filter']   = $filter;
@@ -182,8 +187,20 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         // Ask the client to continue, independently of whether we just rendered
         // rows. Upstream only reached this inside the no-rows branch, so simply
         // listing partial results would have silently stopped the search.
+        //
+        // Bounded: app.js re-issues every 100ms for as long as we keep saying
+        // "incomplete", with no ceiling of its own. Past the budget we stop
+        // asking and tell the user plainly, rather than spinning forever.
         if ($incomplete) {
-            $rcmail->output->command('continue_search', $search_request);
+            $total_limit = (int) $rcmail->config->get('imap_search_total_timelimit', 120);
+            $elapsed     = time() - (int) ($_SESSION['search_start'] ?? time());
+
+            if ($total_limit > 0 && $elapsed >= $total_limit) {
+                $rcmail->output->show_message('searchpartial', 'notice');
+            }
+            else {
+                $rcmail->output->command('continue_search', $search_request);
+            }
         }
 
         // update message count display

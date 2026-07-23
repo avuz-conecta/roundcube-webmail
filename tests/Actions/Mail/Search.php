@@ -206,6 +206,70 @@ class Actions_Mail_Search extends ActionTestCase
     }
 
     /**
+     * Once the total budget is spent the client must NOT be asked to continue,
+     * so the search ends instead of looping forever.
+     */
+    function test_search_stops_continuing_past_total_timelimit()
+    {
+        $action = new rcmail_action_mail_search;
+        $output = $this->initOutput(rcmail_action::MODE_AJAX, 'mail', 'search');
+
+        $_GET = [
+            '_q'        => 'test',
+            '_mbox'     => 'INBOX',
+            '_scope'    => 'all',
+            '_continue' => 'searchreq1',
+        ];
+
+        // this logical search started well beyond the 120s budget
+        $_SESSION['search_start'] = time() - 999;
+
+        // a multifolder result triggers the message list header rebuild,
+        // which reads current sort settings from the session
+        $_SESSION['sort_col']   = '';
+        $_SESSION['sort_order'] = null;
+
+        $index = new rcube_result_index('INBOX', 'SEARCH 10');
+
+        $partial = new rcube_result_multifolder(['INBOX', 'Archive']);
+        $partial->add($index);
+        $partial->incomplete = true;
+
+        self::initStorage()
+            ->registerFunction('set_page')
+            ->registerFunction('set_search_set')
+            ->registerFunction('list_folders_subscribed', ['INBOX', 'Archive'])
+            ->registerFunction('search', $partial)
+            ->registerFunction('get_search_set', ['SEARCH HEADER SUBJECT test', $partial, 'UTF-8', '', false])
+            ->registerFunction('get_search_set', ['SEARCH HEADER SUBJECT test', $partial, 'UTF-8', '', false])
+            ->registerFunction('get_pagesize', 10)
+            ->registerFunction('get_pagesize', 10)
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('list_messages', [
+                10 => self::partialHitHeader(),
+            ])
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_error_code', null)
+            ->registerFunction('count', 1)
+            ->registerFunction('count', 1)
+            ->registerFunction('folder_data', [])
+            ->registerFunction('get_quota', false);
+
+        $this->runAndAssert($action, OutputJsonMock::E_EXIT);
+
+        $result = $output->getOutput();
+
+        $this->assertFalse(strpos($result['exec'], 'this.continue_search(') !== false,
+            'past the total budget the client must not be asked to continue');
+        $this->assertTrue(strpos($result['exec'], 'partial hit') !== false,
+            'the results found so far must still be shown');
+    }
+
+    /**
      * Test search_input() method
      */
     function test_search_input()

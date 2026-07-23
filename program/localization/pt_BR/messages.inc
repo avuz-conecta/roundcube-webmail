@@ -114,6 +114,7 @@ $messages['notuploadedwarning'] = 'Há anexos ainda não enviados. Aguarde ou ca
 $messages['searchsuccessful'] = '$nr mensagens encontradas.';
 $messages['contactsearchsuccessful'] = '$nr contatos encontrados.';
 $messages['searchnomatch'] = 'A pesquisa não encontrou resultados';
+$messages['searchpartial'] = 'A busca foi interrompida. Estes são resultados parciais — refine a busca ou tente novamente.';
 $messages['searching'] = 'Pesquisando...';
 $messages['checking'] = 'Verificando...';
 $messages['stillsearching'] = 'Ainda procurando...';

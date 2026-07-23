@@ -53,6 +53,11 @@ COPY program/lib/Roundcube/rcube_imap_search.php /var/www/roundcube/program/lib/
 # interval. Without this COPY the build uses the stock file and the setting is
 # silently ignored.
 COPY program/lib/Roundcube/rcube_imap.php /var/www/roundcube/program/lib/Roundcube/rcube_imap.php
+# messages.inc (en_US, pt_BR): adds 'searchpartial', shown when a search hits its
+# total budget. Without these COPYs the label is missing and the user sees a raw
+# message key.
+COPY program/localization/en_US/messages.inc /var/www/roundcube/program/localization/en_US/messages.inc
+COPY program/localization/pt_BR/messages.inc /var/www/roundcube/program/localization/pt_BR/messages.inc
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \
