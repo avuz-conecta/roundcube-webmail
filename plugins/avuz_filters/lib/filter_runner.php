@@ -54,7 +54,7 @@ class avuz_filter_runner
         sort($uids, SORT_NUMERIC);
         $uids  = array_slice($uids, 0, self::MAX_PER_PASS);
         $start = microtime(true);
-        $acted = 0; $maxUid = $last;
+        $acted = 0; $maxUid = $last; $filled = [];
 
         // Include our loop-guard marker header in the fetch, then fetch the batch.
         $storage->set_options(['fetch_headers' => 'X-Avuz-Forwarded']);
@@ -74,9 +74,19 @@ class avuz_filter_runner
             $already_fwd = !empty($h->others['x-avuz-forwarded']);
             $actions = avuz_rule_engine::match($hv, $rules);
             if ($actions) {
-                self::apply($rcmail, $storage, $folder, $trash, (int) $uid, $actions, $already_fwd);
+                $moved_to = self::apply($rcmail, $storage, $folder, $trash, (int) $uid, $actions, $already_fwd);
+                if ($moved_to !== null) {
+                    $filled[$moved_to] = true;
+                }
                 $acted++;
             }
+        }
+        // Tell the client the new unread count for every folder we just filed into.
+        // Without this the destination badge never updates: we move messages via
+        // $storage->move_message() directly, which bypasses move.php:128 where core
+        // would normally push it. Same approach as plugins/archive/archive.php:291.
+        foreach (array_keys($filled) as $filled_folder) {
+            rcmail_action_mail_index::send_unread_count($filled_folder, true);
         }
         $store->set_state($user, $folder, $maxUid, $uidv);
         return $acted;
@@ -112,7 +122,8 @@ class avuz_filter_runner
      * order the actions were configured in. Prevents dropping later actions and
      * prevents flagging a message that already left the folder.
      */
-    private static function apply(rcmail $rcmail, $storage, string $folder, string $trash, int $uid, array $actions, bool $already_fwd): void
+    /** @return string|null the folder the message was moved into, or null */
+    private static function apply(rcmail $rcmail, $storage, string $folder, string $trash, int $uid, array $actions, bool $already_fwd): ?string
     {
         $fwd     = [];
         $move_to = self::move_target($actions, $trash);
@@ -132,7 +143,10 @@ class avuz_filter_runner
         }
         if ($move_to !== null) {
             $storage->move_message($uid, $move_to, $folder); // terminal: removes from INBOX
+            return $move_to;
         }
+
+        return null;
     }
 
     /**
