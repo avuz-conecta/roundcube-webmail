@@ -119,7 +119,27 @@ $config['plugins'] = [
     'avuz_filters',
     'password',
     'avuz_prefetch',
+    'avuz_poll_scope',
 ];
+
+// -- New-mail polling scope --
+// Folders that can receive mail WITHOUT our filters putting it there, so they are
+// the only ones worth polling. A prod survey of cache_index found these recur
+// across many unrelated accounts (Spam 17 users, Newsletter 16, Notification 11,
+// Junk 6) — they are Zoho's automatic classification folders, filled server-side
+// at delivery without ever touching INBOX. Everything else is either a system
+// folder that never receives unread mail or a folder the user made themselves,
+// which our filters already report on when they file into it.
+//
+// 'Junk' is listed alongside 'Spam' as cheap insurance, NOT because Zoho names
+// the spam folder differently per account — that was checked and is false. Every
+// Zoho user here has 'Spam' in the system-folder block; where 'Junk' exists it is
+// an extra user folder that coexists with it, never a replacement. It is kept in
+// the list because we cannot see what fills it, and the cost of a folder a user
+// does not have is zero: the list is intersected with subscribed folders.
+// Matched on the last path segment, so a nested INBOX/Newsletter matches too.
+// Capped at avuz_poll_folders::CAP.
+$config['avuz_poll_folders'] = ['Spam', 'Junk', 'Newsletter', 'Notification'];
 
 // -- Password change (Zoho via internal broker) --
 $config['password_driver']           = 'zoho_broker';
