@@ -123,7 +123,31 @@ class Framework_ImapGenericPipelined extends PHPUnit\Framework\TestCase
         $this->assertFalse($imap->connected());
     }
 
-    /** Builds the canned server side of a successful N-folder pipelined search. */
+    function test_searchMulti_handles_many_folders_in_one_batch()
+    {
+        $folders = [];
+        for ($i = 0; $i < 30; $i++) {
+            $folders["F$i"] = '1';
+        }
+
+        list($imap, $server) = $this->connection($this->replies($folders));
+
+        $results = $imap->searchMulti(array_keys($folders), 'HEADER SUBJECT "x"', true);
+
+        $this->assertCount(30, $results);
+        $this->assertSame(['1'], $results['F29']->get());
+    }
+
+    /**
+     * Builds the canned server side of a successful N-folder pipelined search.
+     *
+     * Keep N small. These replies are written into the socket before the call,
+     * with nothing draining the other end, so they must fit the socket buffer —
+     * only ~8kB for a unix socket pair on macOS. Multi-batch runs are covered by
+     * test_searchMulti_chunks_batches_so_replies_cannot_deadlock, which needs no
+     * replies at all, and end-to-end by the harness in
+     * docs/superpowers/spikes/2026-07-22-search-pipelining/.
+     */
     private function replies(array $folders, int $first_tag = 1): string
     {
         $out = '';
@@ -211,17 +235,25 @@ class Framework_ImapGenericPipelined extends PHPUnit\Framework\TestCase
 
     function test_searchMulti_chunks_batches_so_replies_cannot_deadlock()
     {
-        $folders = [];
-        for ($i = 0; $i < 30; $i++) {
-            $folders["F$i"] = '1';
-        }
+        // Three batches' worth of folders, no replies waiting, client socket
+        // non-blocking: the first read fails. A pipelined-but-unbatched
+        // implementation would already have written all 90 SELECTs. A batched
+        // one has written exactly one batch, which is the property that keeps
+        // a batch's replies inside the socket buffers.
+        $folders = array_map(
+            static fn($i) => "F$i",
+            range(1, rcube_imap_generic::SEARCH_PIPELINE_CHUNK * 3)
+        );
 
-        list($imap, $server) = $this->connection($this->replies($folders));
+        list($imap, $server) = $this->connection('');
+        stream_set_blocking($imap->socket(), false);
 
-        $results = $imap->searchMulti(array_keys($folders), 'HEADER SUBJECT "x"', true);
+        $this->assertFalse($imap->searchMulti($folders, 'HEADER SUBJECT "x"', true));
 
-        $this->assertCount(30, $results);
-        $this->assertSame(['1'], $results['F29']->get());
+        $this->assertSame(
+            rcube_imap_generic::SEARCH_PIPELINE_CHUNK,
+            substr_count($this->sent($server), ' SELECT ')
+        );
     }
 
     function test_searchMulti_refuses_an_empty_folder_list()

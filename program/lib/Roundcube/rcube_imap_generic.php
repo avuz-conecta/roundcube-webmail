@@ -77,10 +77,13 @@ class rcube_imap_generic
     const COMMAND_ANONYMIZED = 8;
 
     // Folders per pipelined SELECT+SEARCH batch. The client writes without
-    // reading, so a batch's replies must fit the socket buffers or both ends
-    // block. 25 pairs is ~5kB of commands and, with ESEARCH compacting results
-    // to ranges, a few kB of replies.
-    const SEARCH_PIPELINE_CHUNK = 25;
+    // reading, so a batch's replies pile up in the socket buffers; if they
+    // outgrow them both ends stall until the stream timeout fires. Measured
+    // reply volume is ~455 bytes per folder (the fixed SELECT reply dominates;
+    // ESEARCH compacts the result to ranges), so 50 buffers ~23kB — a wide
+    // margin under a 64kB receive buffer, and 107 folders costs 3 batches
+    // rather than 5.
+    const SEARCH_PIPELINE_CHUNK = 50;
 
     const DEBUG_LINE_LENGTH = 4098; // 4KB + 2B for \r\n
 
