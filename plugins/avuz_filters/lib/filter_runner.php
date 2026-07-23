@@ -83,6 +83,29 @@ class avuz_filter_runner
     }
 
     /**
+     * Which folder, if any, a matched rule's actions move the message into.
+     * Pure so it can be unit tested; `apply()` performs the move itself.
+     * Terminal actions are last-wins, matching the original inline logic.
+     */
+    public static function move_target(array $actions, string $trash): ?string
+    {
+        $move_to = null;
+
+        foreach ($actions as $a) {
+            $type = $a['type'] ?? '';
+
+            if ($type === 'delete') {
+                $move_to = $trash;
+            }
+            elseif ($type === 'move' && !empty($a['folder'])) {
+                $move_to = $a['folder'];
+            }
+        }
+
+        return $move_to;
+    }
+
+    /**
      * Apply one rule's actions to a single UID via the live IMAP session.
      * Flags MUST be set while the message is still in INBOX; the move/delete is the
      * terminal action (removes it from INBOX), so it runs LAST regardless of the
@@ -91,14 +114,15 @@ class avuz_filter_runner
      */
     private static function apply(rcmail $rcmail, $storage, string $folder, string $trash, int $uid, array $actions, bool $already_fwd): void
     {
-        $move_to = null; $fwd = [];
+        $fwd     = [];
+        $move_to = self::move_target($actions, $trash);
+
         foreach ($actions as $a) {
             switch ($a['type']) {
                 case 'mark_read': $storage->set_flag($uid, 'SEEN', $folder); break;
                 case 'flag':      $storage->set_flag($uid, 'FLAGGED', $folder); break;
                 case 'forward':   if (!empty($a['to'])) $fwd[] = $a['to']; break;  // copy, not terminal
-                case 'delete':    $move_to = $trash; break;                        // last-wins
-                case 'move':      if (!empty($a['folder'])) $move_to = $a['folder']; break;
+                // 'delete' and 'move' are terminal and resolved by move_target() above
             }
         }
         // Redirect a copy to each target while the message is still in INBOX. Skip if
