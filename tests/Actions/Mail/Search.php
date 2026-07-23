@@ -114,6 +114,98 @@ class Actions_Mail_Search extends ActionTestCase
     }
 
     /**
+     * Builds a message header for the partial-results test.
+     *
+     * id/uid/size aren't in rcube_message_header's header-name map, so
+     * from_array() would route them into $header->others instead of the
+     * object properties the message-list renderer actually reads. Set them
+     * directly so the row isn't skipped as empty.
+     */
+    private static function partialHitHeader()
+    {
+        $header = rcube_message_header::from_array([
+            'subject'      => 'partial hit',
+            'from'         => 'test1@test.com',
+            'to'           => 'Test <test2@test.com>',
+            'date'         => 'Sun, 13 Mar 2022 17:08:18 +0100',
+            'content-type' => 'text/plain',
+        ]);
+
+        $header->id   = 42;
+        $header->uid  = 10;
+        $header->size = 889;
+
+        return $header;
+    }
+
+    /**
+     * An unfinished cross-folder search must still render the rows found so far,
+     * and must still ask the client to continue.
+     */
+    function test_search_incomplete_renders_partial_results()
+    {
+        $action = new rcmail_action_mail_search;
+        $output = $this->initOutput(rcmail_action::MODE_AJAX, 'mail', 'search');
+
+        $_GET = [
+            '_q'     => 'test',
+            '_mbox'  => 'INBOX',
+            '_scope' => 'all',
+        ];
+
+        // a multifolder result triggers the message list header rebuild,
+        // which reads current sort settings from the session
+        $_SESSION['sort_col']   = '';
+        $_SESSION['sort_order'] = null;
+
+        $index = new rcube_result_index('INBOX', 'SEARCH 10');
+
+        $partial = new rcube_result_multifolder(['INBOX', 'Archive']);
+        $partial->add($index);
+        $partial->incomplete = true;
+
+        self::initStorage()
+            ->registerFunction('set_page')
+            ->registerFunction('set_search_set')
+            ->registerFunction('list_folders_subscribed', ['INBOX', 'Archive'])
+            ->registerFunction('search', $partial)
+            ->registerFunction('get_search_set', ['SEARCH HEADER SUBJECT test', $partial, 'UTF-8', '', false])
+            ->registerFunction('get_search_set', ['SEARCH HEADER SUBJECT test', $partial, 'UTF-8', '', false])
+            ->registerFunction('get_pagesize', 10)
+            ->registerFunction('get_pagesize', 10)
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('get_folder', 'INBOX')
+            ->registerFunction('list_messages', [
+                10 => self::partialHitHeader(),
+            ])
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_threading', false)
+            ->registerFunction('get_error_code', null)
+            ->registerFunction('count', 1)
+            ->registerFunction('count', 1)
+            ->registerFunction('folder_data', [])
+            ->registerFunction('get_quota', false);
+
+        $this->runAndAssert($action, OutputJsonMock::E_EXIT);
+
+        $result = $output->getOutput();
+
+        // the row the completed folder found must be on screen
+        $this->assertTrue(strpos($result['exec'], 'partial hit') !== false,
+            'partial results must be rendered while the search is still running');
+
+        // and the client must still be told to continue
+        $this->assertTrue(strpos($result['exec'], 'this.continue_search(') !== false,
+            'an incomplete search must still ask the client to continue');
+
+        // the UI must not be told there are zero messages
+        $this->assertNotSame(0, $result['env']['messagecount'],
+            'messagecount must reflect what has been found so far, not 0');
+    }
+
+    /**
      * Test search_input() method
      */
     function test_search_input()

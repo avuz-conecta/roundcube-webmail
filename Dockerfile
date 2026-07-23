@@ -39,6 +39,10 @@ COPY program/lib/Roundcube/rcube_washtml.php /var/www/roundcube/program/lib/Roun
 # request writes back its stale copy of compose_data and silently erases
 # attachments uploaded while it was in flight. See customizations.json.
 COPY program/lib/Roundcube/rcube_session.php /var/www/roundcube/program/lib/Roundcube/rcube_session.php
+# search.php: progressive search — render partial cross-folder results instead of
+# holding the UI blank until every folder finishes. Without this COPY the build
+# uses the stock file and searches look like a hang again.
+COPY program/actions/mail/search.php /var/www/roundcube/program/actions/mail/search.php
 # rcube_imap_generic.php + rcube_imap_search.php: pipelined multi-folder search.
 # Without these COPYs the build uses the stock files and the pipelining is inert —
 # searches silently fall back to one SELECT+SEARCH round trip per folder.

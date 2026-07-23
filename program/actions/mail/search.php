@@ -121,10 +121,20 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         $_SESSION['search_interval'] = $interval;
         $_SESSION['search_filter']   = $filter;
 
-        // Get the headers
-        if (!isset($result) || empty($result->incomplete)) {
-            $result_h = $rcmail->storage->list_messages($mbox, 1, $sort_column, $sort_order);
-        }
+        // AVUZ PATCH — progressive search.
+        //
+        // A cross-folder search that has not finished still holds complete
+        // results for the folders that DID finish: rcube_imap_search::exec()
+        // caches them and reuses them on the next round. Upstream refuses to
+        // list them, forcing count to 0 "to keep UI locked", so the user sees
+        // an empty screen behind a spinner for as long as the whole search
+        // takes — measured at up to 212s on this deployment, which is why
+        // people abandon searches instead of waiting.
+        //
+        // List them instead. This costs ONE FETCH of at most mail_pagesize
+        // headers; it does not re-search anything.
+        $incomplete = !empty($result) && !empty($result->incomplete);
+        $result_h   = $rcmail->storage->list_messages($mbox, 1, $sort_column, $sort_order);
 
         // Make sure we got the headers
         if (!empty($result_h)) {
@@ -132,7 +142,10 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
 
             self::js_message_list($result_h, false);
 
-            if ($search_str) {
+            // Only claim success once. While incomplete the client keeps its
+            // own "still searching" state, and announcing a total that is
+            // about to grow would be a lie.
+            if ($search_str && !$incomplete) {
                 $all_count = $rcmail->storage->count(null, 'ALL');
                 $rcmail->output->show_message('searchsuccessful', 'confirmation', ['nr' => $all_count]);
             }
@@ -151,10 +164,9 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
             $count = 0;
             self::display_server_error();
         }
-        // advice the client to re-send the (cross-folder) search request
-        else if (!empty($result) && !empty($result->incomplete)) {
-            $count = 0;  // keep UI locked
-            $rcmail->output->command('continue_search', $search_request);
+        else if ($incomplete) {
+            // nothing found YET — no rows, but the search is still running
+            $count = 0;
         }
         else {
             $count = 0;
@@ -165,6 +177,13 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
             if (isset($result) && !empty($result->multi) && $scope == 'all') {
                 $rcmail->output->command('select_folder', '');
             }
+        }
+
+        // Ask the client to continue, independently of whether we just rendered
+        // rows. Upstream only reached this inside the no-rows branch, so simply
+        // listing partial results would have silently stopped the search.
+        if ($incomplete) {
+            $rcmail->output->command('continue_search', $search_request);
         }
 
         // update message count display
