@@ -16,6 +16,7 @@
 - Every new test file must be registered in `tests/phpunit.xml` under the `Plugins` testsuite or it will not run.
 - Run tests from the `tests/` directory: `cd tests && ../vendor/bin/phpunit -c phpunit.xml --filter <name>`.
 - The `Framework` suite has **7 pre-existing errors** unrelated to this work (missing `Net_LDAP3`, config env keys). A run is clean if it shows 7 errors and **0 failures**. Never "fix" those.
+- The `Plugins` suite likewise carries **1 pre-existing error and 1 pre-existing failure** (Enigma crypto-key config, Password bcrypt-cost env). Confirmed against the unmodified branch during Task 1. A clean Plugins run shows those two and nothing new — earlier revisions of this plan wrongly said "0 failures and 0 errors".
 - Allowlist config key: `avuz_poll_folders`. Default value: `['Spam', 'Junk', 'Newsletter', 'Notification']`.
 - Allowlist result cap: **6 folders** (~3.6s of IMAP at 3 commands x ~0.2s RTT).
 - Folder matching is on the **last path segment, case-insensitively** — Zoho nests folders under INBOX on some accounts.
