@@ -1,0 +1,7 @@
+services:
+  dovecot:
+    build: {context: ., dockerfile: Dockerfile.dovecot}
+  imapproxy:
+    build: {context: ., dockerfile: Dockerfile}
+    ports: ["1143:143"]
+    depends_on: [dovecot]

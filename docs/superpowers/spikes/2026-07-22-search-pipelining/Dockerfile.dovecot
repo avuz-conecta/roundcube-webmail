@@ -1,0 +1,8 @@
+FROM debian:12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends dovecot-imapd \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd -u 1000 -m vmail
+COPY dovecot.conf /etc/dovecot/conf.d/99-spike.conf
+COPY users /etc/dovecot/users
+RUN mkdir -p /srv/mail && chown -R 1000:1000 /srv/mail
+CMD ["/usr/sbin/dovecot", "-F"]
