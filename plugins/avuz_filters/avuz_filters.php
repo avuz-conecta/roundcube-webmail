@@ -17,11 +17,20 @@ class avuz_filters extends rcube_plugin
         $this->ensure_schema();
 
         // Triggers (in-session): first sort on login, then on every mail refresh.
-        // 'refresh' fires on the periodic + manual refresh reliably; 'new_messages'
-        // only fires when check_recent detects a status diff (not always), so we use
-        // 'refresh' as the primary trigger and keep 'new_messages' as a bonus.
+        // 'refresh' is the ONLY trigger we hook here — do not add 'new_messages'
+        // back. In program/actions/mail/check_recent.php, 'new_messages' fires at
+        // line 96, inside the per-folder loop and BEFORE the INBOX message list is
+        // built; 'refresh' fires at line 207, after that list has already been
+        // built and queued to the client. Running the filter pass on
+        // 'new_messages' moves matched mail out of INBOX mid-loop, which
+        // invalidates the folder's cached count; the subsequent cached
+        // count() read at line 129 then returns 0 and message_list.clear(true)
+        // wipes the list with nothing to repopulate it (reproduced: INBOX goes
+        // empty for one refresh cycle, fixed by a manual refresh). Keeping only
+        // 'refresh' means a newly-arrived message can stay visible in INBOX for
+        // one refresh cycle before being filed away — an accepted trade-off,
+        // and strictly better than the list going empty.
         $this->add_hook('login_after', [$this, 'on_login']);
-        $this->add_hook('new_messages', [$this, 'on_new_messages']);
         $this->add_hook('refresh', [$this, 'on_new_messages']);
 
         // Settings UI + manual "apply to existing" action.
