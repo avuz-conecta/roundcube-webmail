@@ -135,6 +135,18 @@
       "description": "Custom in-session mail-filters plugin replacing managesieve (Zoho has no ManageSieve server or filter API). Rules stored in Postgres (avuz_filters, avuz_filter_state); applied to INBOX over the user's OWN live IMAP session on login + new-mail refresh + a manual 'apply to existing' action. Actions: move/mark-read/flag/delete(to Trash); conditions from/to/cc/subject x contains/is; first-match; bounded 1000 msgs/pass. No daemon, no stored credentials. Requires Postgres.",
       "risk": "medium",
       "notes": "V1 is Roundcube-only (in-session) — does NOT filter for Outlook/phone-primary users. Cold-start seeds the last-uid watermark (never mass-processes existing inbox). See docs/superpowers/specs/2026-07-19-avuz-filters-design.md + plan (incl. hardening backlog). managesieve removed from plugins list."
+    },
+    {
+      "id": "avuz-poll-scope-plugin",
+      "type": "plugin",
+      "paths": [
+        "plugins/avuz_poll_scope/",
+        "config/config.inc.php",
+        "Dockerfile"
+      ],
+      "description": "Bounds new-mail polling. Neutralises check_all_folders on the 'ready' hook so core takes its cheap path in both check_recent and getunread, then re-adds a capped allowlist of Zoho auto-file folders (Spam/Junk/Newsletter/Notification) via the 'check_recent' hook for users who enabled the preference.",
+      "risk": "medium",
+      "notes": "Depends on two upstream details that must be re-checked after any rebase: check_recent.php exposing a 'check_recent' hook with a 'folders' key, and getunread.php having no hooks so that neutralising the config value is the only way to bound it. If upstream adds a hook to getunread, this can be simplified. Applies to every action, not just refresh, because check_recent.php forces check_all true for any action that is not 'refresh'. See docs/superpowers/specs/2026-07-22-folder-poll-scope-design.md."
     }
   ]
 }
