@@ -262,6 +262,77 @@ class Framework_ImapGenericPipelined extends PHPUnit\Framework\TestCase
 
         $this->assertFalse($imap->searchMulti([], 'HEADER SUBJECT "x"', true));
     }
+
+    /**
+     * Reproduces the accented-search-term production bug: an IMAP literal (any
+     * non-ASCII search term, e.g. Portuguese "reunião") only becomes a
+     * non-synchronizing {n+} literal — safe to pipeline — when prefs['literal+']
+     * or prefs['literal-'] is already known. A connection whose capabilities are
+     * known but incomplete (e.g. IMAP4REV1/ESEARCH seen, but no CAPABILITY
+     * command has actually run yet — the state of a connection reused from
+     * imapproxy, which is greeted with "* OK [XPROXYREUSE] ..." and never runs
+     * the normal post-connect CAPABILITY exchange) must still resolve
+     * LITERAL- before the first literal goes out, or putLineC() blocks reading
+     * a '+' continuation that a pipelined batch's next command's reply gets
+     * mistaken for, desynchronising every tag after it.
+     */
+    function test_searchMulti_reads_capability_before_pipelining_a_literal_on_an_incompletely_known_connection()
+    {
+        $literal = rcube_imap_generic::escape('reunião');
+        $criteria = 'HEADER SUBJECT ' . $literal . ' HEADER FROM ' . $literal;
+
+        $replies = "* CAPABILITY IMAP4REV1 ESEARCH LITERAL- UIDPLUS\r\n"
+            . "A0001 OK CAPABILITY completed\r\n"
+            . "* 3 EXISTS\r\n"
+            . "A0002 OK [READ-WRITE] Select completed\r\n"
+            . "* ESEARCH (TAG \"\") UID ALL 5\r\n"
+            . "A0003 OK Search completed\r\n";
+
+        list($imap, $server) = $this->connection($replies);
+        // ESEARCH is already known — the caller must not be able to coast on
+        // that check to also resolve LITERAL-; capability_read stays false,
+        // exactly like a connection whose capabilities were only ever seen
+        // partially, never through a real CAPABILITY command.
+        $imap->attach_reused($imap->socket(), ['IMAP4REV1', 'ESEARCH']);
+
+        $results = $imap->searchMulti(['INBOX'], $criteria, true);
+
+        $this->assertIsArray($results, 'a known LITERAL- must keep the search pipelined, not fall back to serial');
+        $this->assertSame(['5'], $results['INBOX']->get());
+
+        $sent = $this->sent($server);
+        $this->assertSame(1, substr_count($sent, ' CAPABILITY'), 'capability must be resolved exactly once');
+        $this->assertStringContainsString("{" . strlen('reunião') . "+}\r\n", $sent,
+            'the literal must be non-synchronizing once LITERAL- is known, or it would block on a "+" that never arrives');
+        $this->assertStringNotContainsString("{" . strlen('reunião') . "}\r\n", $sent,
+            'must not fall back to a synchronizing literal when LITERAL- is known');
+    }
+
+    /**
+     * Safety net for the case above: if the capability truly cannot be
+     * resolved (or resolves without LITERAL-/LITERAL+), a literal cannot be
+     * trusted to pipeline — putLineC() would block on a '+' continuation
+     * that, in a pipelined batch, desynchronises every tag after it. Declining
+     * to the serial path is silent and correct; blocking is not.
+     */
+    function test_searchMulti_declines_a_literal_when_capability_resolves_without_a_literal_extension()
+    {
+        $literal  = rcube_imap_generic::escape('reunião');
+        $criteria = 'HEADER SUBJECT ' . $literal;
+
+        $replies = "* CAPABILITY IMAP4REV1 ESEARCH\r\n"
+            . "A0001 OK CAPABILITY completed\r\n";
+
+        list($imap, $server) = $this->connection($replies);
+        $imap->attach_reused($imap->socket(), ['IMAP4REV1', 'ESEARCH']);
+
+        $results = $imap->searchMulti(['INBOX'], $criteria, true);
+
+        $this->assertFalse($results, 'without a known literal extension, pipelining a literal cannot be trusted');
+
+        $sent = $this->sent($server);
+        $this->assertStringNotContainsString(' SELECT ', $sent, 'must decline before writing anything for the batch');
+    }
 }
 
 /**
@@ -277,6 +348,23 @@ class pipelined_imap_stub extends rcube_imap_generic
         $this->prefs['timeout'] = 5;
         $this->capability       = ['IMAP4REV1', 'ESEARCH', 'LITERAL-'];
         $this->capability_read  = true;
+    }
+
+    /**
+     * Attaches like attach(), but leaves capability_read false with whatever
+     * capabilities are handed in — the state of a connection that has only
+     * ever seen capabilities in passing (e.g. reused from imapproxy), never
+     * through an actual CAPABILITY command.
+     *
+     * @param resource $fp
+     */
+    public function attach_reused($fp, array $capability = []): void
+    {
+        $this->fp               = $fp;
+        $this->logged           = true;
+        $this->prefs['timeout'] = 5;
+        $this->capability       = $capability;
+        $this->capability_read  = false;
     }
 
     /** @return resource */

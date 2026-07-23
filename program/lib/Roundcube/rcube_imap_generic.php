@@ -2079,8 +2079,15 @@ class rcube_imap_generic
             $line = $this->readFullLine(4096);
 
             if ($line === '' || $line === false) {
+                // The caller (searchMulti()) declines to an array result on
+                // false, and rcube_imap_search::search() falls back to the
+                // serial path when that happens — this is a handled
+                // condition, not a server failure, so it must not surface as
+                // a user-facing error toast. setError() would do exactly
+                // that via rcube_imap::get_error_code()/get_error_str().
+                // closeSocket() stays: the connection is genuinely unusable.
                 $this->closeSocket();
-                $this->setError(self::ERROR_COMMAND, "Connection closed while waiting for $tag");
+                rcube::write_log('errors', "pipelined search: connection closed while waiting for $tag — falling back to serial");
 
                 return false;
             }
@@ -2089,8 +2096,10 @@ class rcube_imap_generic
 
             // Untagged data starts with '*' or '+'; only a tagged line can match here.
             if (preg_match('/^(A[0-9]+) /', $line, $matches) && $matches[1] !== $tag) {
+                // Same reasoning as above: a desync is handled internally by
+                // the serial fallback, so log it instead of raising it to the UI.
                 $this->closeSocket();
-                $this->setError(self::ERROR_COMMAND, "Pipelined reply out of order: expected $tag, got {$matches[1]}");
+                rcube::write_log('errors', 'pipelined search desync: expected ' . $tag . ', got ' . $matches[1] . ' — falling back to serial');
 
                 return false;
             }
@@ -2132,6 +2141,33 @@ class rcube_imap_generic
         $command = $return_uid ? 'UID SEARCH' : 'SEARCH';
         $params  = $this->searchParams($criteria, $items);
         $results = [];
+
+        // A non-ASCII search term (e.g. an accented word) is sent as an IMAP
+        // literal. putLineC() only turns that into a non-synchronizing {n+}
+        // literal when prefs['literal+'] or prefs['literal-'] is already set;
+        // otherwise it blocks reading a '+' continuation, which inside a
+        // pipelined batch consumes a reply that belongs to a later command and
+        // desynchronises every tag after it. A connection reused from
+        // imapproxy (greeted with "* OK [XPROXYREUSE] ...") never ran the
+        // normal post-connect CAPABILITY exchange, so prefs['literal-'] is
+        // still unset here even though the server (e.g. Zoho) does advertise
+        // LITERAL-. Force the capability to be read before the first literal
+        // goes out, so the pref is populated and the batch stays pipelined.
+        // Costs one extra round trip, once per connection, against the 100+
+        // this method exists to save — do not delete this as "redundant".
+        // getCapability() already no-ops once capability_read is true, so
+        // this is free on every call after the connection's first search.
+        $this->getCapability('LITERAL-');
+
+        // Last-resort guard: if the server still isn't known to support
+        // either literal extension and this search would send a literal,
+        // pipelining cannot be trusted not to block on a '+' that will never
+        // come. Decline so the caller falls back to the serial path, instead
+        // of unconditionally forcing accented searches serial regardless of
+        // server support.
+        if (empty($this->prefs['literal+']) && empty($this->prefs['literal-']) && preg_match('/\{[0-9]+\}/', $params)) {
+            return false;
+        }
 
         // A pipelined run walks through every folder and ends on an arbitrary
         // one, so the cached selected-mailbox state describes nothing. Drop it
