@@ -147,6 +147,18 @@
       "description": "Bounds new-mail polling. Neutralises check_all_folders on the 'ready' hook so core takes its cheap path in both check_recent and getunread, then re-adds a capped allowlist of Zoho auto-file folders (Spam/Junk/Newsletter/Notification) via the 'check_recent' hook for users who enabled the preference.",
       "risk": "medium",
       "notes": "Depends on two upstream details that must be re-checked after any rebase: check_recent.php exposing a 'check_recent' hook with a 'folders' key, and getunread.php having no hooks so that neutralising the config value is the only way to bound it. If upstream adds a hook to getunread, this can be simplified. Applies to every action, not just refresh, because check_recent.php forces check_all true for any action that is not 'refresh'. See docs/superpowers/specs/2026-07-22-folder-poll-scope-design.md."
+    },
+    {
+      "id": "search-pipelining",
+      "type": "core-patch",
+      "paths": [
+        "program/lib/Roundcube/rcube_imap_generic.php",
+        "program/lib/Roundcube/rcube_imap_search.php",
+        "Dockerfile"
+      ],
+      "description": "Pipelined multi-folder search: writes every SELECT+SEARCH pair to the one IMAP connection before reading any reply, collapsing N x 2 round trips into roughly one. Includes desync detection and a fallback to the existing serial path.",
+      "risk": "high",
+      "notes": "Zoho advertises no SORT, THREAD, MULTISEARCH or QRESYNC, so all-folder search costs N x 2 RTT serially; measured 55.2s -> 6.4s for a 107-folder account. BOTH files need their Dockerfile COPY or the patch is inert and search silently reverts to serial — that was caught only because a staging smoke test grepped the running image. Depends on rcube_imap_generic::execute() keeping its write-then-read structure and on putLineC's LITERAL- non-synchronizing path; re-verify both after any rebase. Any tag arriving out of order must close the connection and fall back."
     }
   ]
 }

@@ -33,6 +33,11 @@ COPY program/lib/Roundcube/rcube_washtml.php /var/www/roundcube/program/lib/Roun
 # request writes back its stale copy of compose_data and silently erases
 # attachments uploaded while it was in flight. See customizations.json.
 COPY program/lib/Roundcube/rcube_session.php /var/www/roundcube/program/lib/Roundcube/rcube_session.php
+# rcube_imap_generic.php + rcube_imap_search.php: pipelined multi-folder search.
+# Without these COPYs the build uses the stock files and the pipelining is inert —
+# searches silently fall back to one SELECT+SEARCH round trip per folder.
+COPY program/lib/Roundcube/rcube_imap_generic.php /var/www/roundcube/program/lib/Roundcube/rcube_imap_generic.php
+COPY program/lib/Roundcube/rcube_imap_search.php /var/www/roundcube/program/lib/Roundcube/rcube_imap_search.php
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \
