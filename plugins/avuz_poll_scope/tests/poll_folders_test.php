@@ -54,7 +54,18 @@ class poll_folders_test extends TestCase
     function testTruncatesToTheCap()
     {
         $subscribed = ['a/Spam', 'b/Spam', 'c/Spam', 'd/Spam', 'e/Spam', 'f/Spam', 'g/Spam'];
-        $this->assertCount(6, avuz_poll_folders::select($subscribed, self::ALLOW, '/', 6));
+        $this->assertSame(
+            ['a/Spam', 'b/Spam', 'c/Spam', 'd/Spam', 'e/Spam', 'f/Spam'],
+            avuz_poll_folders::select($subscribed, self::ALLOW, '/', 6)
+        );
+    }
+
+    function testDoesNotMatchNonLastPathSegment()
+    {
+        $this->assertSame(
+            [],
+            avuz_poll_folders::select(['Newsletter/Old', 'Spam/Archive'], self::ALLOW, '/', 6)
+        );
     }
 
     function testEmptyAllowlistSelectsNothing()
