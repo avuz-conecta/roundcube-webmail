@@ -170,6 +170,33 @@
       "description": "Removes the 'Sent date' option from the message-list sort menu.",
       "risk": "low",
       "notes": "Zoho advertises no SORT capability, so Roundcube cannot ask the server to order a folder and must FETCH 1:* (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (DATE)]) across the whole folder and sort in PHP. Measured on prod: one user sorting by date saw 82s list loads on a ~20k-message INBOX (40k response lines in a single FETCH); switching to arrival took the same list to ~1.2s. STILL REACHABLE: subject, fromto, from, to, cc and size have the SAME cost — only 'arrival' and 'none' use the server's natural order. Removing just 'date' addresses the option a user actually picked, not the underlying class of problem. A real fix is either a local sort index or restricting the menu to arrival/none."
+    },
+    {
+      "id": "progressive-search",
+      "type": "core-patch",
+      "paths": [
+        "program/actions/mail/search.php",
+        "program/lib/Roundcube/rcube_imap.php",
+        "program/localization/en_US/messages.inc",
+        "program/localization/pt_BR/messages.inc",
+        "config/config.inc.php",
+        "Dockerfile"
+      ],
+      "description": "Renders cross-folder search results as each folder completes, instead of holding the UI blank until the whole search finishes. Makes the search round limit configurable (imap_search_timelimit, set to 8s) and bounds the total (imap_search_total_timelimit, 120s) so a search that cannot finish ends with a partial-results notice rather than an endless retry loop.",
+      "risk": "medium",
+      "notes": "Upstream search.php fetched headers only when the result was complete and set 'count = 0 // keep UI locked'; measured on prod, an all-folder search could show nothing for 212s. Roundcube already searches incrementally and caches finished folder results in the session, so listing them costs one FETCH of at most mail_pagesize headers and re-searches nothing. WATCH ON REBASE: the continue_search call was moved OUT of the no-rows branch — if upstream restructures that block, re-check that continuation still fires when rows are rendered, or the search silently stops after one round. Also re-check that the final searchnomatch branch cannot run while incomplete. The 60s time limit at rcube_imap.php was hardcoded upstream."
+    },
+    {
+      "id": "avuz-search-notice-plugin",
+      "type": "plugin",
+      "paths": [
+        "plugins/avuz_search_notice/",
+        "config/config.inc.php",
+        "Dockerfile"
+      ],
+      "description": "Warns once per session when the user selects whole-message (body/TEXT) search, which costs Zoho server-side compute that no client change can reduce.",
+      "risk": "low",
+      "notes": "Client-side only; hooks the search UI via the 'beforesearch' event, never the search itself. 69s measured for one all-folder body search on this deployment. If Roundcube renames or removes the beforesearch event the warning silently stops appearing — harmless, but re-check on upgrade."
     }
   ]
 }
