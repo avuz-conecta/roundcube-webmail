@@ -2000,6 +2000,30 @@ class rcube_imap_generic
             return new rcube_result_index($mailbox, '* SEARCH');
         }
 
+        $params = $this->searchParams($criteria, $items);
+
+        list($code, $response) = $this->execute($return_uid ? 'UID SEARCH' : 'SEARCH', [$params]);
+
+        if ($code != self::ERROR_OK) {
+            $response = null;
+        }
+
+        return new rcube_result_index($mailbox, $response);
+    }
+
+    /**
+     * Builds the argument text of a SEARCH command.
+     *
+     * Shared by search() and searchMulti() so the serial and pipelined paths
+     * can never send subtly different commands for the same criteria.
+     *
+     * @param string $criteria Searching criteria
+     * @param array  $items    Return items (MIN, MAX, COUNT, ALL)
+     *
+     * @return string Text following "SEARCH " on the wire
+     */
+    protected function searchParams($criteria, $items = [])
+    {
         // If ESEARCH is supported always use ALL
         // but not when items are specified or using simple id2uid search
         if (empty($items) && preg_match('/[^0-9]/', $criteria)) {
@@ -2022,13 +2046,7 @@ class rcube_imap_generic
             $params .= 'ALL';
         }
 
-        list($code, $response) = $this->execute($return_uid ? 'UID SEARCH' : 'SEARCH', [$params]);
-
-        if ($code != self::ERROR_OK) {
-            $response = null;
-        }
-
-        return new rcube_result_index($mailbox, $response);
+        return $params;
     }
 
     /**
