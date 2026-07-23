@@ -82,11 +82,19 @@ class rcube_imap_search
             }
         }
 
+        // One pipelined pass over every pending job: all SELECT+SEARCH pairs go
+        // out before any reply is read, so N folders cost ~1 round trip rather
+        // than 2N. Anything it declines is answered by the serial loop below,
+        // which is the unchanged behaviour.
+        $this->run_pipelined($sort_field, $threading);
+
         // execute jobs and gather results
         foreach ($this->jobs as $job) {
             // only run search if within the configured time limit
             // TODO: try to estimate the required time based on folder size and previous search performance
-            if (!$this->timelimit || floor(microtime(true)) - $start < $this->timelimit) {
+            if (!$job->has_result()
+                && (!$this->timelimit || floor(microtime(true)) - $start < $this->timelimit)
+            ) {
                 $job->run();
             }
 
@@ -95,6 +103,61 @@ class rcube_imap_search
         }
 
         return $results;
+    }
+
+    /**
+     * Answers as many pending jobs as possible from a single pipelined batch.
+     *
+     * Declines silently — leaving every job for the serial path — whenever the
+     * pipeline cannot represent the search faithfully. Correctness first: a
+     * fast wrong answer is worse than a slow right one.
+     *
+     * Set AVUZ_PIPELINED_SEARCH=0 in the environment to disable it entirely and
+     * restore the serial behaviour, without a rebuild.
+     *
+     * @param string $sort_field Header field to sort by, if any
+     * @param bool   $threading  True if threaded listing is active
+     */
+    protected function run_pipelined($sort_field, $threading)
+    {
+        if (empty($this->jobs) || $threading || $sort_field || getenv('AVUZ_PIPELINED_SEARCH') === '0') {
+            return;
+        }
+
+        $imap = $this->get_imap();
+
+        if (!$imap->connected()) {
+            return;
+        }
+
+        // One batch sends one command shape to many folders, so every job must
+        // agree on the criteria. rcube_imap::search() allows a per-folder
+        // criteria array; that case goes serial.
+        $criteria = null;
+        $folders  = [];
+
+        foreach ($this->jobs as $job) {
+            $job_criteria = $job->get_criteria();
+
+            if ($criteria !== null && $job_criteria !== $criteria) {
+                return;
+            }
+
+            $criteria  = $job_criteria;
+            $folders[] = $job->get_folder();
+        }
+
+        $results = $imap->searchMulti($folders, $criteria, true);
+
+        if (!is_array($results)) {
+            return;
+        }
+
+        foreach ($this->jobs as $job) {
+            if (isset($results[$job->get_folder()])) {
+                $job->set_result($results[$job->get_folder()]);
+            }
+        }
     }
 
     /**
@@ -177,6 +240,63 @@ class rcube_imap_search_job /* extends Stackable */
     }
 
     /**
+     * The folder this job searches.
+     *
+     * @return string Folder name
+     */
+    public function get_folder()
+    {
+        return $this->folder;
+    }
+
+    /**
+     * The exact criteria text handed to the IMAP SEARCH command.
+     *
+     * Extracted so the pipelined and the serial path cannot diverge on the
+     * skip_deleted prefix or the charset handling.
+     *
+     * @return string Criteria, including any CHARSET prefix
+     */
+    public function get_criteria()
+    {
+        $criteria = $this->search;
+        $charset  = $this->charset;
+
+        if ($this->worker->options['skip_deleted'] && !preg_match('/UNDELETED/', $criteria)) {
+            $criteria = 'UNDELETED '.$criteria;
+        }
+
+        // unset CHARSET if criteria string is ASCII, this way
+        // SEARCH won't be re-sent after "unsupported charset" response
+        if ($charset && $charset != 'US-ASCII' && is_ascii($criteria)) {
+            $charset = 'US-ASCII';
+        }
+
+        return ($charset && $charset != 'US-ASCII' ? "CHARSET $charset " : '') . $criteria;
+    }
+
+    /**
+     * True once a real result has been stored, by either path.
+     *
+     * @return bool
+     */
+    public function has_result()
+    {
+        return empty($this->result->incomplete);
+    }
+
+    /**
+     * Stores a result obtained outside run(), i.e. from a pipelined batch.
+     *
+     * @param rcube_result_index $result Search result for this job's folder
+     */
+    public function set_result($result)
+    {
+        $result->incomplete = false;
+        $this->result       = $result;
+    }
+
+    /**
      * Executes the IMAP search
      */
     public function run()
@@ -241,8 +361,7 @@ class rcube_imap_search_job /* extends Stackable */
         }
 
         if (empty($messages) || $messages->is_error()) {
-            $messages = $imap->search($this->folder,
-                ($charset && $charset != 'US-ASCII' ? "CHARSET $charset " : '') . $criteria, true);
+            $messages = $imap->search($this->folder, $this->get_criteria(), true);
 
             // Error, try with US-ASCII (some servers may support only US-ASCII)
             if ($messages->is_error() && $charset && $charset != 'US-ASCII') {

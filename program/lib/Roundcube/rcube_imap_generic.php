@@ -76,6 +76,15 @@ class rcube_imap_generic
     const COMMAND_LASTLINE   = 4;
     const COMMAND_ANONYMIZED = 8;
 
+    // Folders per pipelined SELECT+SEARCH batch. The client writes without
+    // reading, so a batch's replies pile up in the socket buffers; if they
+    // outgrow them both ends stall until the stream timeout fires. Measured
+    // reply volume is ~455 bytes per folder (the fixed SELECT reply dominates;
+    // ESEARCH compacts the result to ranges), so 50 buffers ~23kB — a wide
+    // margin under a 64kB receive buffer, and 107 folders costs 3 batches
+    // rather than 5.
+    const SEARCH_PIPELINE_CHUNK = 50;
+
     const DEBUG_LINE_LENGTH = 4098; // 4KB + 2B for \r\n
 
 
@@ -2000,6 +2009,30 @@ class rcube_imap_generic
             return new rcube_result_index($mailbox, '* SEARCH');
         }
 
+        $params = $this->searchParams($criteria, $items);
+
+        list($code, $response) = $this->execute($return_uid ? 'UID SEARCH' : 'SEARCH', [$params]);
+
+        if ($code != self::ERROR_OK) {
+            $response = null;
+        }
+
+        return new rcube_result_index($mailbox, $response);
+    }
+
+    /**
+     * Builds the argument text of a SEARCH command.
+     *
+     * Shared by search() and searchMulti() so the serial and pipelined paths
+     * can never send subtly different commands for the same criteria.
+     *
+     * @param string $criteria Searching criteria
+     * @param array  $items    Return items (MIN, MAX, COUNT, ALL)
+     *
+     * @return string Text following "SEARCH " on the wire
+     */
+    protected function searchParams($criteria, $items = [])
+    {
         // If ESEARCH is supported always use ALL
         // but not when items are specified or using simple id2uid search
         if (empty($items) && preg_match('/[^0-9]/', $criteria)) {
@@ -2022,13 +2055,137 @@ class rcube_imap_generic
             $params .= 'ALL';
         }
 
-        list($code, $response) = $this->execute($return_uid ? 'UID SEARCH' : 'SEARCH', [$params]);
+        return $params;
+    }
 
-        if ($code != self::ERROR_OK) {
-            $response = null;
+    /**
+     * Reads one tagged reply from a pipelined batch.
+     *
+     * Differs from execute()'s read loop in exactly two ways, both of which
+     * exist because a pipelined batch shares one connection: an empty read
+     * means the peer went away and must not be retried, and a tag other than
+     * the expected one means the reply stream is desynchronised, at which
+     * point every later reply would be attributed to the wrong folder.
+     *
+     * @param string $tag Command identifier to read up to
+     *
+     * @return array|false ['code' => int, 'response' => string], or false if the connection was closed
+     */
+    protected function readPipelined($tag)
+    {
+        $response = '';
+
+        do {
+            $line = $this->readFullLine(4096);
+
+            if ($line === '' || $line === false) {
+                $this->closeSocket();
+                $this->setError(self::ERROR_COMMAND, "Connection closed while waiting for $tag");
+
+                return false;
+            }
+
+            $response .= $line;
+
+            // Untagged data starts with '*' or '+'; only a tagged line can match here.
+            if (preg_match('/^(A[0-9]+) /', $line, $matches) && $matches[1] !== $tag) {
+                $this->closeSocket();
+                $this->setError(self::ERROR_COMMAND, "Pipelined reply out of order: expected $tag, got {$matches[1]}");
+
+                return false;
+            }
+        }
+        while (!$this->startsWith($line, $tag . ' ', true, true));
+
+        $code = $this->parseResult($line, '');
+
+        return [
+            'code'     => $code,
+            'response' => rtrim(substr($response, 0, -strlen($line)), "\r\n"),
+        ];
+    }
+
+    /**
+     * Executes SELECT + SEARCH for many folders on one connection, pipelined.
+     *
+     * Every command in a batch is written before any reply is read, so N
+     * folders cost roughly one round trip instead of 2N. The server performs
+     * exactly the same work; only the waiting disappears.
+     *
+     * The run is all-or-nothing. Anything other than a clean OK for every
+     * command returns false, and the caller must fall back to the serial
+     * search() path — which, unlike a pipeline, can retry a folder.
+     *
+     * @param array  $folders    Folder names to search, in order
+     * @param string $criteria   Searching criteria, identical for every folder
+     * @param bool   $return_uid Enable UID in result instead of sequence ID
+     * @param array  $items      Return items (MIN, MAX, COUNT, ALL)
+     *
+     * @return array|false rcube_result_index keyed by folder name, or false if the run cannot be trusted
+     */
+    public function searchMulti($folders, $criteria, $return_uid = false, $items = [])
+    {
+        if (!$this->connected() || empty($folders)) {
+            return false;
         }
 
-        return new rcube_result_index($mailbox, $response);
+        $command = $return_uid ? 'UID SEARCH' : 'SEARCH';
+        $params  = $this->searchParams($criteria, $items);
+        $results = [];
+
+        // A pipelined run walks through every folder and ends on an arbitrary
+        // one, so the cached selected-mailbox state describes nothing. Drop it
+        // before the first command, not after, so an abandoned run leaves the
+        // connection in the same honest state as a completed one.
+        $this->clear_mailbox_cache();
+        unset($this->data['EXISTS'], $this->data['RECENT']);
+        $this->selected = null;
+
+        foreach (array_chunk($folders, self::SEARCH_PIPELINE_CHUNK) as $batch) {
+            $tags = [];
+
+            foreach ($batch as $folder) {
+                $select = $this->nextTag();
+                if ($this->putLineC($select . ' SELECT ' . $this->escape($folder)) === false) {
+                    return false;
+                }
+
+                $search = $this->nextTag();
+                if ($this->putLineC($search . ' ' . $command . ' ' . $params) === false) {
+                    return false;
+                }
+
+                $tags[] = [$folder, $select, $search];
+            }
+
+            // Read the whole batch before judging it, so a folder that failed
+            // leaves no unread replies behind for the next command to trip on.
+            $failed = false;
+
+            foreach ($tags as $tag) {
+                list($folder, $select, $search) = $tag;
+
+                $selected = $this->readPipelined($select);
+                $found    = $selected === false ? false : $this->readPipelined($search);
+
+                if ($selected === false || $found === false) {
+                    return false;
+                }
+
+                if ($selected['code'] != self::ERROR_OK || $found['code'] != self::ERROR_OK) {
+                    $failed = true;
+                    continue;
+                }
+
+                $results[$folder] = new rcube_result_index($folder, $found['response']);
+            }
+
+            if ($failed) {
+                return false;
+            }
+        }
+
+        return $results;
     }
 
     /**

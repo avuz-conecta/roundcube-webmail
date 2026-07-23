@@ -2,7 +2,10 @@
 
 **Date**: 2026-07-22
 **Branch**: `avuz-customization`
-**Status**: DESIGN — not approved, nothing implemented
+**Status**: **Candidate C IMPLEMENTED on branch `claude/search-pipelining`, NOT deployed.**
+107 folders against real Zoho: 55.2s → 6.4s, 200 matches, result sets identical to serial. Evidence and batch sizing:
+`../spikes/2026-07-22-search-pipelining/RESULTS.md`. Plan:
+`../plans/2026-07-22-search-pipelining.md`. Sections below marked ⟲ were superseded by measurement.
 **Relates to**: `2026-07-20-roundcube-search-latency-design.md` (its "Wave 2" is one candidate
 here, not the decision), `2026-07-22-open-latency-HANDOFF.md`, `2026-07-22-PROD-ROLLBACK-ANCHORS.md`
 
@@ -26,7 +29,7 @@ than a guess.
 | The class was designed for threads that PHP no longer has | `rcube_imap_search.php:133` — `class rcube_imap_search_job /* extends Stackable */` (pthreads) |
 | Each job does `SELECT` then `SEARCH` on the one shared connection | `rcube_imap_generic.php:1990-2025` — `search()` calls `select()` first |
 | An empty folder costs 1 round trip, not 2 | `rcube_imap_generic.php:1999-2002` — returns early when `EXISTS` is 0 after SELECT |
-| A 60s cap silently truncates results | `rcube_imap.php:1655` `set_timelimit(60)`; jobs past the limit are skipped and returned with `incomplete` |
+| ⟲ ~~A 60s cap silently truncates results~~ **WRONG — corrected 2026-07-22.** The cap exists (`rcube_imap.php:1655`) but results are never shown truncated: `search.php:125` skips the listing when `incomplete` is set, `:155` keeps the UI locked, and `app.js:5550` re-issues the search with `_continue` **unboundedly**. Completed folders carry forward in `$_SESSION['search']`, so the final answer is complete and correct. The real failure mode is an invisible retry loop — one prod search spent **212.3s** behind a spinner across 4 requests | `rcube_imap.php:1655`, `program/actions/mail/search.php:125,155`, `program/js/app.js:5550`; prod `php-perf.log` session `03fe47ca` |
 | A plugin can replace search entirely, no core patch | `rcube_imap.php:1629` `imap_search_before` hook; setting `result` bypasses all IMAP search |
 | Scope is per-request session state, with no config option | `search.php:46`, `search.php:120` — `_scope` from the query string into `$_SESSION['search_scope']` |
 | With no explicit `_headers`, search is **subject only** | `search.php:287-289` |
@@ -38,10 +41,17 @@ than a guess.
 | Roundcube already tracks per-folder `UIDVALIDITY` + `HIGHESTMODSEQ` for its own cache | `rcube_imap_cache.php:781-793` (`add_index_row`), `:837` (`validate`), `:1038` |
 | **The image has no working schema-migration path** | `docker/entrypoint.sh:29` runs `bin/initdb.sh --create-db` with **no `--dir`**, which `bin/initdb.sh:31-33` rejects outright; the failure is swallowed by `2>/dev/null \|\| true` |
 
-Carried forward from 2026-07-20 (measured then, **not re-verified today**): 198ms RTT to Zoho;
-all-folder subject search 12.82s returning 2.3 kB; Zoho advertises `ESEARCH`, `CONDSTORE`,
-`LIST-STATUS`, `IDLE`, `MOVE`, `UIDPLUS`, and **not** `SORT`, `THREAD`, `QRESYNC`,
-`COMPRESS=DEFLATE`, **not** `MULTISEARCH`.
+⟲ **Re-measured 2026-07-22 on prod `1.0.3`, live traffic, 9.2h window.** All-folder search is
+**median 15.5s, worst 212.3s** (7 logical searches, 11 requests, 4 sessions) — worse than the
+12.82s it replaces, not better. Single-folder search median **0.92s** for the whole request, of
+which ~0.40s is 2 IMAP round trips: Zoho's per-folder SEARCH compute is small and round-trip count
+is the cost. Capability re-captured both through imapproxy and direct: unchanged, still **no**
+`SORT`, `THREAD`, `MULTISEARCH`, `QRESYNC`, `COMPRESS=DEFLATE`; **`LITERAL-` is advertised**, which
+makes non-ASCII search terms pipeline-safe without a continuation round trip. Full data:
+`../spikes/2026-07-22-search-pipelining/RESULTS.md`.
+
+Superseded, kept for the record — carried forward from 2026-07-20: 198ms RTT to Zoho; all-folder
+subject search 12.82s returning 2.3 kB.
 
 ### The mechanism, stated plainly
 
@@ -57,13 +67,12 @@ There are therefore only three ways out:
 
 Every candidate below is one of those three.
 
-### Assumption stated explicitly
+### ⟲ Assumption, now tested
 
-The 12.82s figure predates Wave 1, Wave 1.5, gzip, `refresh_interval` 120 and the
-imapproxy `cache_expiration_time` 1800 change, all of which are now live as `1.0.3`. Part of
-that number was connection warm-up, which those changes attack. **Re-measure before building
-anything.** If all-folder search is now 6s rather than 13s, the cheapest candidate may already
-be sufficient and the expensive one is unjustified.
+The assumption was that part of the 12.82s was connection warm-up, which `1.0.3` attacks, so the
+number might already be smaller. **It is not.** Re-measurement puts all-folder search at a median
+of 15.5s. None of `1.0.3`'s changes touch the search path, so the premise was never half-fixed —
+the cheapest candidate is not sufficient and the mechanism below stands unchanged.
 
 ## Candidates
 
@@ -118,20 +127,54 @@ IMAP permits a client to send further commands without waiting for the previous 
 round trips into ~1 RTT plus Zoho's own processing time. 13s → plausibly 1-2s, with **no** change
 in the work Zoho performs and **no** additional connections.
 
-This is the cheapest large win *if it works*. It is also the least certain:
+⟲ **SPIKED 2026-07-22 — it works. This is the recommended candidate.** Measured with the real
+`rcube_imap_generic` through the production `up-imapproxy` build at a simulated 198ms RTT:
 
-- RFC 3501 §5.5 tells clients not to pipeline commands where the ambiguity of out-of-order
-  execution would matter. `SELECT` followed by `SEARCH` is exactly such a dependency. It is safe
-  only on a server that processes a connection's commands strictly in order. **Whether Zoho does
-  is unverified.**
-- The **imapproxy sidecar sits in the middle** and parses client commands to maintain its own
-  state. Whether it relays several commands written in one go, unmangled, is **unverified**.
-- `rcube_imap_generic` has no pipelining (verified above), so this needs a core patch — a cost
-  paid again at every upstream rebase.
-- Failure mode is nasty: a single desynchronised tag corrupts the shared connection for the rest
-  of the session. Any tag mismatch must force the connection closed, never be recovered from.
+| Folders | Serial | Pipelined | Result sets |
+|---|---|---|---|
+| 26 | 11,056 ms | 422 ms | identical |
+| 107 | 44,961 ms | 517 ms | identical |
 
-All four points are settled by a **one- to two-day spike on staging**, whose outcome is binary.
+Tags returned in strict send order in every run. The four doubts, resolved:
+
+- ~~Whether Zoho processes commands in order is unverified.~~ Probed directly: three commands in
+  one write, three replies in tag order, one 234ms round trip. **Still unproven for the
+  authenticated selected-state path** — since closed: the gate ran against real Zoho 2026-07-22
+  (107 folders, 200 matches, identical to serial).
+- ~~Whether imapproxy relays pipelined commands unmangled is unverified.~~ **It does.** Same Debian
+  `imapproxy 1.2.8~svn20171105-2+b2` package the sidecar uses; 214 commands in one write, relayed
+  intact and in order.
+- `rcube_imap_generic` has no pipelining, so this needs a core patch — but a small one.
+  `execute():3945` already separates the write from the read-until-tag loop; the pipelined variant
+  reuses both halves. The spike needed **no repository change at all**, only a subclass over the
+  existing `protected` I/O.
+- The desync failure mode is real and must be handled: any tag out of order ⇒ close the connection
+  and fall back to the serial path. A failed `SELECT` mid-pipeline was tested and is safe — RFC
+  3501 leaves no mailbox selected, so the dependent `SEARCH` returns `BAD`, not another folder's
+  results.
+
+Two details a production patch must get right: reset `$this->selected` and `$this->data[...]` after
+a pipelined run, and accept that `search()`'s empty-folder short-circuit (`:1999-2002`) cannot
+apply — the SEARCH is committed before the SELECT reply arrives. That costs no round trips.
+
+**Implemented 2026-07-22** on branch `claude/search-pipelining`, not deployed. End-to-end through
+the real `rcube_imap_search::exec()` against **real Zoho**, a 107-folder account:
+**55.2s → 6.4s (8.6x)**, 3 batches, every tag in send order, 200 matched messages in exactly the same folders as a serial run. The local dovecot harness
+showed 1.47s; Zoho is slower because pipelining removes round trips, not the server's own per-folder
+SEARCH compute. **7s is the production expectation.**
+
+| Piece | Where |
+|---|---|
+| `searchParams()`, `readPipelined()`, `searchMulti()`, `SEARCH_PIPELINE_CHUNK = 50` | `program/lib/Roundcube/rcube_imap_generic.php` |
+| `run_pipelined()` + job accessors, serial fallback | `program/lib/Roundcube/rcube_imap_search.php` |
+| 26 behaviour tests | `tests/Framework/ImapGenericPipelined.php`, `tests/Framework/ImapSearchPipelined.php` |
+| Kill switch, no rebuild | `AVUZ_PIPELINED_SEARCH=0` |
+
+Batch size is measured, not guessed: 455 reply bytes per folder, so 50 folders buffer ~23 kB.
+The pipeline declines — leaving the serial path to answer — when threading or a sort field is
+requested, when the jobs do not share one criteria string, or when any reply is not `OK`.
+
+Evidence and reproduction: `../spikes/2026-07-22-search-pipelining/RESULTS.md`.
 
 ### Rejected without further work
 
@@ -150,9 +193,17 @@ choice and is listed as an open question, but it is not a latency design.
 **Raising `pm.max_children`, adding FPM workers, or more backend concurrency as a primary lever.**
 Ruled out with evidence in `PROD-ROLLBACK-ANCHORS.md`.
 
-## Recommendation
+## ⟲ Recommendation — RESOLVED 2026-07-22
 
-**Gate the decision on a spike. Do not start building the index yet.**
+Steps 1 and 2 below are **done**. The spike passed. **Build candidate C. Do not build B. Do not
+build A.** B's only advantage was time-to-first-result, and a 0.52s completion erases it while its
+3× concurrency cost against Zoho remains. A is unjustified on today's numbers: ~7 all-folder
+searches per 9 hours, and 5 of the 11 observed `_scope=all` requests were `body`/`TEXT` searches
+that A structurally cannot serve. Remaining sequencing is in
+`../spikes/2026-07-22-search-pipelining/RESULTS.md`. No technical gate remains — the Zoho ordering
+test passed 2026-07-22; what is left is a staging measurement before a prod deploy.
+
+The original gating plan, kept for the record:
 
 1. **Re-measure first (half a day).** Reproduce the A/B/C table from 2026-07-20 on staging against
    current `1.0.3` code. Also record each user's actual folder count and per-folder `MESSAGES` via
@@ -232,7 +283,7 @@ refresh regardless of whether anything arrived.
 
 | Failure | Applies to | Consequence | Mitigation |
 |---|---|---|---|
-| `set_timelimit(60)` truncation | today, B, C | search silently returns partial results; reads as lost mail | surface partial state in the UI; **blocker for all-folder-default regardless of chosen candidate** |
+| ⟲ `set_timelimit(60)` **retry loop** (not truncation) | today, B | UI locks behind a spinner and re-issues the search unboundedly via `_continue`; 212.3s observed on prod. Results stay correct | **C removes it by construction** — at ~0.5s the limit is never reached. No UI work needed; there is no truncation to surface |
 | Pipeline desync | C | shared connection corrupted for the whole session | any tag mismatch ⇒ drop the connection, never recover in place |
 | imapproxy mangles pipelined commands | C | wrong or hung results | settled by the spike, before any code lands |
 | Fan-out raises Zoho concurrency | B | contention, the exact pathology from the open-latency work | hard cap of 3 in flight; explicit user action only, never background |
@@ -267,10 +318,12 @@ truncation surfaced in the UI.
 
 ## Could not verify
 
-1. Zoho's current `CAPABILITY` string — the list used here is from 2026-07-20.
-2. Whether Zoho processes pipelined commands strictly in order (candidate C's premise).
-3. Whether the imapproxy sidecar relays pipelined commands unmangled.
-4. Whether all-folder search is still ~13s on `1.0.3`; the 12.82s figure is pre-Wave-1.
+1. ✅ **RESOLVED** — Zoho's `CAPABILITY` re-captured 2026-07-22, unchanged.
+2. ✅ **RESOLVED** — the ordering gate ran against real Zoho 2026-07-22 on a 107-folder account,
+   authenticated and in selected state: tags in strict send order, and 200 matched messages
+   attributed to exactly the same folders as a serial run.
+3. ✅ **RESOLVED** — imapproxy relays pipelined commands unmangled and in order.
+4. ✅ **RESOLVED** — no. It is median 15.5s on `1.0.3`, worst 212.3s.
 5. Real folder counts and per-folder message counts. The brief's "8-26 folders, tens to low
    hundreds of messages" describes *cached* rows, not server truth, and the 2026-07-20 doc records
    a 16,000-message account. These are not the same measurement and A's sizing depends on the

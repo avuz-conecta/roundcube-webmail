@@ -64,7 +64,10 @@ The real ceiling is Zoho IMAP latency/concurrency, not local resources.
   wrong conclusion; the wire log is what settled it.
 
   **Fix not yet applied** — see the decision below.
-- Slow **all-folder search** (~13s) — needs Wave 2 (search index), still only specced.
+- ~~Slow **all-folder search** (~13s) — needs Wave 2 (search index).~~ **Re-measured 2026-07-22:
+  median 15.5s, worst 212.3s on `1.0.3`. Fixed by pipelined search (candidate C), implemented and
+  measured against real Zoho at 55.2s → 6.4s for a 107-folder account, but NOT deployed. The search
+  index is deferred, not built.**
 - Slow **first open of image-heavy mail during prefetch** — the connection/bandwidth/FPM
   contention below. Wave 1.5 helps but doesn't cure it. This is the brainstorm's target.
 
@@ -167,7 +170,9 @@ cached by the browser). The cost is entirely the **first, cold** open of a not-y
 | **Per-request timing shim** | **LIVE ON PROD** (`:1.0.3`). `logs/php-perf.log`: start, PHP-only duration, session id, action. Disable with `AVUZ_PERF_LOG=0`. |
 | **FPM slowlog** | Configured but **non-functional**: the container lacks `CAP_SYS_PTRACE`, so FPM logs `failed to ptrace(ATTACH)` and writes no stacks. Needs `cap_add: SYS_PTRACE` in the stack. |
 | **MIME structure batching** spec | **BLOCKED/dead** (see wrong-turn #2). |
-| **Wave 2** (local search index) | Specced (`2026-07-20-roundcube-search-latency-design.md`), untouched. All-folder search still ~13s. Client asked for all-folder-default — gated on Wave 2. |
+| **Wave 2** (local search index, candidate A) | **DEFERRED — do not build.** Superseded by pipelined search below. It cannot serve `body`/`TEXT` searches at all, and 5 of the 11 `_scope=all` requests measured on prod were exactly those. Rationale: `2026-07-22-search-latency-design.md`. |
+| **Pipelined multi-folder search** (candidate C) | **IMPLEMENTED, NOT DEPLOYED.** Branch `claude/search-pipelining`. All SELECT+SEARCH pairs are written before any reply is read, on the same single connection — same Zoho work, same concurrency, no new state. Measured against real Zoho, 107 folders: **55.2s → 6.4s (8.6x)**, tags in strict order, 200 matches identical to serial. Kill switch `AVUZ_PIPELINED_SEARCH=0` (no rebuild). 26 tests. **Ordering gate PASSED against real Zoho 2026-07-22**, including per-folder attribution (200 matches). No open technical gate remains — only a staging measurement before prod. Spec + evidence: `2026-07-22-search-latency-design.md`, `../spikes/2026-07-22-search-pipelining/RESULTS.md`. |
+| All-folder search re-measured on `1.0.3` | **Median 15.5s, worst 212.3s** (9.2h of prod traffic) — worse than the stale 12.82s, since none of `1.0.3`'s changes touch the search path. The 60s `set_timelimit` does **not** truncate silently; it drives an unbounded `_continue` retry loop behind a spinner. |
 | **Prod deploy** | Endpoint 5 "apps", stack 36, version `1.0.1`. Healthy, sessions preserved. Endpoint 9 "peramix-us" has a stale (not-running) stack — ignore. Rollback in `2026-07-22-PROD-ROLLBACK-ANCHORS.md`. |
 
 Relevant specs/plans in `docs/superpowers/`:
