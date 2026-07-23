@@ -940,3 +940,43 @@ what it contains. Commit.
 **Type consistency:** `move_target(array, string): ?string` is defined in Task 1 and consumed in Task 2 with that signature. `avuz_poll_folders::select(array, array, string, int): array` and `::CAP` are defined in Task 3 and consumed in Task 4 with those types. `apply()` changes to `?string` in Task 2 and every call site is updated in the same task.
 
 **Gap found and closed during review:** Task 5 (customizations register) was missing; the repo requires every deviation from upstream to be recorded there, and this adds a plugin plus a config and Dockerfile change.
+
+---
+## Staging verification (2026-07-22)
+
+Deployed `:staging` to stack `avuz-mail-roundcube-2`. Account used has **81 IMAP folders** — a good
+proxy for the 107-folder production user.
+
+Plugin present in the image, registered in config, allowlist
+`['Spam','Junk','Newsletter','Notification']` live, `merge()` present, app serving 200 on `/` and
+`/healthz`, **zero plugin load errors**.
+
+### Behaviour table, verified on the wire
+
+Separated by timestamp in `logs/imap.log`, since the log carries no action attribution:
+
+| Refresh | Preference | STATUS commands issued | Folders |
+|---|---|---|---|
+| 02:29:15 | off | **1** | INBOX |
+| 02:31:29 | off | **1** | INBOX |
+| 02:33:28 | **on** | **5** | INBOX, Spam, Junk, Newsletter, Notification |
+
+Account total, from the cold `getunread` pass at 02:25:56-02:26:13: **81 folders**.
+
+So the opted-in case went **81 folders -> 5**, and the not-opted-in case is one folder, identical to
+core. Both halves of the design's table confirmed against real IMAP.
+
+### Also observed: the documented `getunread` cold pass, live
+
+    02:25:48   25.46s  getunread   <- first page load of the session, ~85 STATUS in one burst
+    02:27:15    0.11s  getunread   <- second load, cached
+
+Exactly the trade-off recorded in the spec: neutralising the flag puts `getunread` on its cheap
+branch from load #2, not load #1. The first mail page load of a session still counts every folder.
+Large improvement (was every load), not a total fix.
+
+### Not verified here
+
+The `avuz_filters` unread-count push (Task 2) needs a staging account with a rule that moves mail;
+not exercised. Its decision logic is unit-tested; the push itself remains verified only by
+inspection.
