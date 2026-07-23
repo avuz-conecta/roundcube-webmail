@@ -3,8 +3,8 @@
 **Date**: 2026-07-22
 **Branch**: `avuz-customization`
 **Status**: **Candidate C IMPLEMENTED on branch `claude/search-pipelining`, NOT deployed.**
-107 folders: 44.8s → 1.47s, result sets identical to a serial run. Evidence, batch sizing and the
-one remaining gate: `../spikes/2026-07-22-search-pipelining/RESULTS.md`. Plan:
+107 folders against real Zoho: 55.2s → 6.4s, 200 matches, result sets identical to serial. Evidence and batch sizing:
+`../spikes/2026-07-22-search-pipelining/RESULTS.md`. Plan:
 `../plans/2026-07-22-search-pipelining.md`. Sections below marked ⟲ were superseded by measurement.
 **Relates to**: `2026-07-20-roundcube-search-latency-design.md` (its "Wave 2" is one candidate
 here, not the decision), `2026-07-22-open-latency-HANDOFF.md`, `2026-07-22-PROD-ROLLBACK-ANCHORS.md`
@@ -139,7 +139,8 @@ Tags returned in strict send order in every run. The four doubts, resolved:
 
 - ~~Whether Zoho processes commands in order is unverified.~~ Probed directly: three commands in
   one write, three replies in tag order, one 234ms round trip. **Still unproven for the
-  authenticated selected-state path** — that needs one mailbox password and is the only gate left.
+  authenticated selected-state path** — since closed: the gate ran against real Zoho 2026-07-22
+  (107 folders, 200 matches, identical to serial).
 - ~~Whether imapproxy relays pipelined commands unmangled is unverified.~~ **It does.** Same Debian
   `imapproxy 1.2.8~svn20171105-2+b2` package the sidecar uses; 214 commands in one write, relayed
   intact and in order.
@@ -157,7 +158,10 @@ a pipelined run, and accept that `search()`'s empty-folder short-circuit (`:1999
 apply — the SEARCH is committed before the SELECT reply arrives. That costs no round trips.
 
 **Implemented 2026-07-22** on branch `claude/search-pipelining`, not deployed. End-to-end through
-the real `rcube_imap_search::exec()`: **107 folders, 44.8s → 1.47s, identical result sets.**
+the real `rcube_imap_search::exec()` against **real Zoho**, a 107-folder account:
+**55.2s → 6.4s (8.6x)**, 3 batches, every tag in send order, 200 matched messages in exactly the same folders as a serial run. The local dovecot harness
+showed 1.47s; Zoho is slower because pipelining removes round trips, not the server's own per-folder
+SEARCH compute. **7s is the production expectation.**
 
 | Piece | Where |
 |---|---|
@@ -196,8 +200,8 @@ build A.** B's only advantage was time-to-first-result, and a 0.52s completion e
 3× concurrency cost against Zoho remains. A is unjustified on today's numbers: ~7 all-folder
 searches per 9 hours, and 5 of the 11 observed `_scope=all` requests were `body`/`TEXT` searches
 that A structurally cannot serve. Remaining sequencing is in
-`../spikes/2026-07-22-search-pipelining/RESULTS.md`; the one blocking item is an authenticated
-Zoho ordering test, which needs a mailbox password.
+`../spikes/2026-07-22-search-pipelining/RESULTS.md`. No technical gate remains — the Zoho ordering
+test passed 2026-07-22; what is left is a staging measurement before a prod deploy.
 
 The original gating plan, kept for the record:
 
@@ -315,8 +319,9 @@ truncation surfaced in the UI.
 ## Could not verify
 
 1. ✅ **RESOLVED** — Zoho's `CAPABILITY` re-captured 2026-07-22, unchanged.
-2. ⚠️ **PARTLY** — Zoho pipelines and replies in order pre-auth (probed). The authenticated
-   selected-state path still needs one run with a mailbox password. **This is the only open gate.**
+2. ✅ **RESOLVED** — the ordering gate ran against real Zoho 2026-07-22 on a 107-folder account,
+   authenticated and in selected state: tags in strict send order, and 200 matched messages
+   attributed to exactly the same folders as a serial run.
 3. ✅ **RESOLVED** — imapproxy relays pipelined commands unmangled and in order.
 4. ✅ **RESOLVED** — no. It is median 15.5s on `1.0.3`, worst 212.3s.
 5. Real folder counts and per-folder message counts. The brief's "8-26 folders, tens to low

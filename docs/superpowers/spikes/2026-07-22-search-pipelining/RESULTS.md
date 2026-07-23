@@ -14,9 +14,11 @@
    replaced was 12.82s.
 2. **Pipelining works.** Proven end-to-end with the real `rcube_imap_generic` class through the real
    `up-imapproxy` build, at a simulated 198ms RTT: **107 folders, 44.96s serial → 0.52s pipelined,
-   identical result sets, tags returned in strict send order.** Zoho's own command loop was probed
-   directly and pipelines correctly.
-3. **Recommendation: build candidate C. Do not build B. Do not build A.**
+   identical result sets, tags returned in strict send order.**
+3. **Confirmed against real Zoho.** Candidate C is now implemented and the ordering gate has passed
+   on a live 107-folder account: **55.2s → 6.4s (8.6x), 200 matched messages in exactly the same
+   folders as a serial run.** See "Post-implementation" below.
+4. **Recommendation: build candidate C. Do not build B. Do not build A.**
 
 ---
 
@@ -104,7 +106,8 @@ terms would otherwise have broken the whole idea.
 ## STEP 2 — Pipelining spike
 
 **Binary question: does pipelined SELECT+SEARCH work against Zoho through imapproxy?**
-**Answer: yes, with one unproven leg named explicitly at the end.**
+**Answer: yes.** One leg — Zoho's *authenticated* ordering — was still open when this section was
+written; it was closed the same day and is recorded under "Post-implementation".
 
 Three unknowns had to fall. They were attacked separately.
 
@@ -163,8 +166,9 @@ does not reorder. That is the server's command loop behaving serially.
 
 **What this does not prove:** it is pre-auth. It does not prove the *authenticated, selected-state*
 machine keeps SELECT and SEARCH ordered, which is the case RFC 3501 §5.5 actually warns about.
-Closing that needs one authenticated run against Zoho with a real mailbox password, which this work
-did not have. It is a five-minute test once a credential exists — see "What is left" below.
+Closing that needed one authenticated run against Zoho with a real mailbox password, which this work
+did not have at the time. **It was run later the same day and passed** — see "Against real Zoho,
+authenticated" below.
 
 ### 2d. The nasty failure mode, tested
 
@@ -230,7 +234,7 @@ volume is ~7 all-folder searches per 9 hours, and 5 of the 11 observed `_scope=a
 
 **Sequencing:**
 
-1. Run the one authenticated Zoho ordering test (2c above) — five minutes, binary, blocking.
+1. ~~Run the one authenticated Zoho ordering test (2c above).~~ **DONE 2026-07-22, passed.**
 2. Implement C as `rcube_imap_search::exec()` calling a new pipelined method, chunked (~25 command
    pairs per batch, so one enormous write can't stall on a socket buffer), with a hard rule: any
    tag out of order ⇒ close the connection and fall back to the existing serial path. The fallback
@@ -247,8 +251,8 @@ body/`TEXT` share turns out to be small. Neither is true today.
 
 ## What is left unproven
 
-1. **Zoho's authenticated SELECT→SEARCH ordering.** Needs one mailbox password. Everything else
-   about C is settled. This is the only real gate.
+1. ~~**Zoho's authenticated SELECT→SEARCH ordering.**~~ **CLOSED 2026-07-22** — 107 folders,
+   200 matches, result sets identical to a serial run. No technical gate remains for C.
 2. **The ~15.5s single-folder cluster.** Four samples inside 464ms across two users and two
    folders. Smells like a fixed timeout, not search cost. Separate investigation.
 3. **Real per-user folder counts.** The 107 figure is carried from the handoff's wire capture, not
@@ -293,6 +297,46 @@ Two things learned while implementing:
 - **A unix socket pair holds only ~8 kB on macOS.** The unit tests pre-load the server's replies
   before the call, so a large canned payload deadlocks the *test harness*. Multi-batch behaviour is
   therefore asserted by the write boundary (no replies needed) plus this end-to-end run.
+
+### Against real Zoho, authenticated (2026-07-22)
+
+`zoho_ordering_gate.php`, direct TLS to `imap.zoho.com:993`, a real 107-folder account, the real
+`rcube_imap_search::exec()` run twice — pipelined off, then on:
+
+Run 1, a term matching nothing:
+
+    folders   : 107
+    matches   : 0
+    serial    :  48441.0 ms
+    pipelined :   6879.5 ms
+    speedup   : 7.0x
+    IDENTICAL : yes
+
+Run 2, `nota` — a term that actually hits mail:
+
+    folders   : 107
+    matches   : 200
+    serial    :  55150.8 ms
+    pipelined :   6434.9 ms
+    speedup   : 8.6x
+    IDENTICAL : yes
+
+**GATE PASSED. Zoho keeps a pipelined batch in order on an authenticated, selected-state
+connection.** 107 `SELECT`+`UID SEARCH` pairs across 3 batches, every tag in send order, no desync,
+no fallback. That was the last open question from the pre-implementation spike.
+
+Both runs were needed, and run 1 alone would have been misleading: with zero matches, `IDENTICAL`
+only compares 107 empty sets against 107 empty sets, so a bug attributing folder N's hits to folder
+N-1 stays invisible. **Run 2 is the real correctness evidence** — 200 matched messages landing in
+exactly the same folders as a serial run. Any future re-run of this gate must use a term that
+matches; check the `matches` line before trusting `IDENTICAL`.
+
+**The production expectation is ~6.5s, not the 1.5s the local harness suggested.** Pipelining
+removes round trips, not Zoho's own per-folder SEARCH compute, and dovecot's search is effectively
+free while Zoho's is not. Note the pipelined time barely moved between the two runs (6.88s → 6.43s)
+while the serial time rose with the extra work (48.4s → 55.2s): what is left after pipelining is
+almost entirely Zoho-side search compute, and it is now the floor. The serial figures also bracket
+the 50-61s observed on prod, so the account and the method are representative.
 
 Shipped, **not deployed**:
 
