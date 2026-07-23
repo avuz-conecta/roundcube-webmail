@@ -2050,6 +2050,53 @@ class rcube_imap_generic
     }
 
     /**
+     * Reads one tagged reply from a pipelined batch.
+     *
+     * Differs from execute()'s read loop in exactly two ways, both of which
+     * exist because a pipelined batch shares one connection: an empty read
+     * means the peer went away and must not be retried, and a tag other than
+     * the expected one means the reply stream is desynchronised, at which
+     * point every later reply would be attributed to the wrong folder.
+     *
+     * @param string $tag Command identifier to read up to
+     *
+     * @return array|false ['code' => int, 'response' => string], or false if the connection was closed
+     */
+    protected function readPipelined($tag)
+    {
+        $response = '';
+
+        do {
+            $line = $this->readFullLine(4096);
+
+            if ($line === '' || $line === false) {
+                $this->closeSocket();
+                $this->setError(self::ERROR_COMMAND, "Connection closed while waiting for $tag");
+
+                return false;
+            }
+
+            $response .= $line;
+
+            // Untagged data starts with '*' or '+'; only a tagged line can match here.
+            if (preg_match('/^(A[0-9]+) /', $line, $matches) && $matches[1] !== $tag) {
+                $this->closeSocket();
+                $this->setError(self::ERROR_COMMAND, "Pipelined reply out of order: expected $tag, got {$matches[1]}");
+
+                return false;
+            }
+        }
+        while (!$this->startsWith($line, $tag . ' ', true, true));
+
+        $code = $this->parseResult($line, '');
+
+        return [
+            'code'     => $code,
+            'response' => rtrim(substr($response, 0, -strlen($line)), "\r\n"),
+        ];
+    }
+
+    /**
      * Simulates SORT command by using FETCH and sorting.
      *
      * @param string       $mailbox      Mailbox name

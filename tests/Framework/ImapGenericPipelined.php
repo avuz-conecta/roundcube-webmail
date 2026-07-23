@@ -82,6 +82,46 @@ class Framework_ImapGenericPipelined extends PHPUnit\Framework\TestCase
 
         $this->assertSame('ALL', $imap->expose_searchParams(''));
     }
+
+    function test_readPipelined_returns_the_untagged_lines_for_its_own_tag()
+    {
+        list($imap, $server) = $this->connection(
+            "* SEARCH 1 4 7\r\n"
+            . "A0001 OK Search completed\r\n"
+        );
+
+        $reply = $imap->expose_readPipelined('A0001');
+
+        $this->assertSame(rcube_imap_generic::ERROR_OK, $reply['code']);
+        $this->assertSame('* SEARCH 1 4 7', $reply['response']);
+    }
+
+    function test_readPipelined_reports_a_failed_command_without_closing_the_connection()
+    {
+        list($imap, $server) = $this->connection("A0001 NO Mailbox doesn't exist\r\n");
+
+        $reply = $imap->expose_readPipelined('A0001');
+
+        $this->assertSame(rcube_imap_generic::ERROR_NO, $reply['code']);
+        $this->assertTrue($imap->connected(), 'a NO reply is an answer, not a desync');
+    }
+
+    function test_readPipelined_closes_the_connection_when_a_foreign_tag_arrives()
+    {
+        list($imap, $server) = $this->connection("A0002 OK Search completed\r\n");
+
+        $this->assertFalse($imap->expose_readPipelined('A0001'));
+        $this->assertFalse($imap->connected(), 'a desynchronised connection must never be reused');
+    }
+
+    function test_readPipelined_closes_the_connection_when_the_socket_is_empty()
+    {
+        list($imap, $server) = $this->connection('');
+        fclose($server);
+
+        $this->assertFalse($imap->expose_readPipelined('A0001'));
+        $this->assertFalse($imap->connected());
+    }
 }
 
 /**
@@ -108,5 +148,10 @@ class pipelined_imap_stub extends rcube_imap_generic
     public function expose_searchParams(string $criteria, array $items = []): string
     {
         return $this->searchParams($criteria, $items);
+    }
+
+    public function expose_readPipelined(string $tag)
+    {
+        return $this->readPipelined($tag);
     }
 }
