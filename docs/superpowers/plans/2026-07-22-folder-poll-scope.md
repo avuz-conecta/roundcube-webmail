@@ -980,3 +980,49 @@ Large improvement (was every load), not a total fix.
 The `avuz_filters` unread-count push (Task 2) needs a staging account with a rule that moves mail;
 not exercised. Its decision logic is unit-tested; the push itself remains verified only by
 inspection.
+
+### Tests C and D (2026-07-23)
+
+**Test C — open all-folder search during a refresh. PASS.** The refresh at 03:28:28 polled all 14
+folders of the search's mailbox set (Archive, Enviadas, INBOX, Lixeira*, Modelos, Newsletter,
+Notification, Rascunho, Snoozed, Spam) and issued 13 SEARCH commands, i.e. `refresh_search()` ran.
+Had the Task 4 regression still been present, it would have polled INBOX + allowlist and issued no
+SEARCH at all. This is the regression verified against live IMAP rather than only in unit tests.
+
+Observed and explained, not a regression: new mail arriving during an open all-folder search does
+not appear in the result list until the user re-searches or navigates. In branch (b) the plugin
+passes core's folder list through verbatim and only appends the allowlist — and here every allowlist
+entry was already in the search set, so `array_unique` collapsed them and core saw a byte-identical
+list to the no-plugin case. That refresh therefore behaved exactly as stock Roundcube would.
+
+Also noted: refreshes during an open all-folder search cost 9-15s, because they poll and re-search
+every folder. Core behaviour, untouched by this work, and the same N x RTT shape the search
+pipelining effort targets.
+
+**Test D — preference OFF with a filter. Partially evidenced.** The preference-OFF refresh polls
+INBOX only (03:33:12, 02:29:15, 02:31:29) — the bound is correct for the ~95-user population. The
+filter half was not captured on the wire: the account used does not appear in `imap.log`. Not
+re-run, because `check_all_folders` does not gate `avuz_filters` — the pass runs on the same hook
+either way, the preference only selects which folders are polled — and the filter is already proven
+working from the `check_recent` hook by Test B's wire capture at 03:20:19.
+
+### Bug found and fixed during staging testing (pre-existing)
+
+`avuz_filters` was registered on `new_messages`, which fires at `check_recent.php:96` INSIDE the
+per-folder loop, before the message list is built. The filter's `UID MOVE` therefore invalidated
+INBOX's cached message count mid-loop; core then read 0 from that stale cache (no `UID SEARCH ALL`
+on the wire) and emitted `message_list.clear(true)` with nothing to repopulate — the user's inbox
+list went visibly EMPTY for one refresh cycle.
+
+First fix (a42e1e1ce) dropped `new_messages`, leaving `refresh` at line 207 — which fixed the empty
+list but filed mail one refresh cycle late. Rejected: mail must land in the right folder on the
+first refresh.
+
+Final fix (e5b7811f5) registers the pass on the `check_recent` hook at line 66 — same request, but
+before the loop and before core reads any count. Verified on the wire: `UID MOVE` at A0007 precedes
+core's `STATUS INBOX` at A0009, and the list is maintained by an incremental
+`UID FETCH ... (FLAGS) (CHANGEDSINCE ...)` rather than cleared. `refresh` stays registered because
+it also fires from `rcmail.php:292`, covering requests where `check_recent::run()` returns early.
+
+This was found by USING the feature, not by review: it needs live IMAP, a real filter rule, and new
+mail arriving mid-refresh. Six review passes and a mutation-tested suite did not surface it.
