@@ -47,7 +47,14 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         $interval = rcube_utils::get_input_string('_interval', rcube_utils::INPUT_GET);
         $continue = rcube_utils::get_input_string('_continue', rcube_utils::INPUT_GET);
 
-        $filter         = trim((string) $filter);
+        // Strip CR/LF from the filter here, at the raw input. $filter is the only
+        // user value that reaches the SEARCH command unescaped (line ~58); a newline
+        // in it could inject extra IMAP commands. It MUST be sanitized before the
+        // command is assembled — NOT after, because the search term is added as a
+        // length-counted IMAP literal (escape(): {N}\r\n...) whose mandatory \r\n a
+        // whole-command preg_replace would corrupt, breaking the literal and
+        // desyncing pipelined multi-folder search on any accented term.
+        $filter         = preg_replace('/[\r\n]+/', ' ', trim((string) $filter));
         $search_request = md5($mbox . $scope . $interval . $filter . $str);
 
         // Parse input
@@ -71,9 +78,14 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         $sort_column = self::sort_column();
         $sort_order  = self::sort_order();
 
-        // We pass the filter as-is into IMAP SEARCH command. A newline could be used
-        // to inject extra commands, so we remove these.
-        $search_str = preg_replace('/[\r\n]+/', ' ', $search_str);
+        // NOTE: the upstream `preg_replace('/[\r\n]+/', ' ', $search_str)` that used
+        // to sit here is deliberately GONE. It flattened the whole assembled command,
+        // including the search term's IMAP literal {N}\r\n<bytes>, turning it into
+        // {N} <bytes> — a malformed literal that putLineC neither converts to the
+        // non-synchronizing {N+} nor handshakes, desyncing pipelined search on any
+        // non-ASCII term (reunião etc). The CR/LF injection guard it provided now
+        // lives at the raw $filter input above, which is the only unescaped value in
+        // the command; the search term is already safe via escape()'s counted literal.
 
         // set message set for already stored (but incomplete) search request
         if (!empty($continue) && isset($_SESSION['search']) && $_SESSION['search_request'] == $continue) {
