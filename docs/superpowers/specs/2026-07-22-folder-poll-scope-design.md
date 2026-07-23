@@ -158,8 +158,17 @@ The preference becomes a signal our plugin interprets, rather than something cor
 | **off** (default) | INBOX + current folder | ~95 — **unchanged from today** |
 | **on** (opt-in) | INBOX + current + allowlist ∩ subscribed | 2 — **107 folders → at most 8** |
 
-**Invariant:** no user who has not enabled the preference sees any change in which folders are
-polled. For users who have, the set strictly shrinks.
+**Invariant, stated precisely:** for a user who has NOT enabled the preference, the periodic
+`refresh` poll and the `getunread` path are unchanged — those are the paths responsible for the
+20-136s refreshes. For users who HAVE enabled it, the set strictly shrinks.
+
+One deliberate exception, which an earlier looser wording of this invariant ("no change
+whatsoever") papered over: the explicit **check-recent** action narrows for *everyone*, opted in or
+not. `check_recent.php:42` forces `$check_all` true for any action that is not `refresh`, so core
+walks every folder there regardless of preference — which is why that action measures 43s average
+on prod. The hook overwrites the folder list on every action, so that walk is bounded too. This is
+an improvement, not a regression, but it is a behavior change affecting all users and should not be
+hidden behind the word "invariant".
 
 #### Folder matching
 

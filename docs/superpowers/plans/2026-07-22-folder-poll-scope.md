@@ -702,7 +702,7 @@ COPY plugins/avuz_poll_scope /var/www/roundcube/plugins/avuz_poll_scope
 - [ ] **Step 6: Confirm the plugin would actually be shipped**
 
 Run: `grep -c avuz_poll_scope Dockerfile config/config.inc.php`
-Expected: `Dockerfile:1` and `config/config.inc.php:2`
+Expected: `Dockerfile:1` and `config/config.inc.php:1` (the allowlist line uses the distinct string `avuz_poll_folders`, so only the plugin registration matches)
 
 A plugin registered in config but missing from the Dockerfile loads on a dev
 checkout and is absent in the image — the same trap that makes core patches inert.
