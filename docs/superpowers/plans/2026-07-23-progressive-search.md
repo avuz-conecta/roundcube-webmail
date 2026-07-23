@@ -817,7 +817,7 @@ Add these two objects to the `entries` array in `customizations.json`, at the en
 - [ ] **Step 2: Verify the JSON**
 
 ```bash
-python3 -c "import json; json.load(open('customizations.json')); print('valid')"
+jq empty customizations.json && echo valid
 git diff --stat customizations.json
 ```
 Expected: `valid`, and only `customizations.json` changed, additions only.
