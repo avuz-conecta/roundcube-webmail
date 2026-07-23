@@ -29,22 +29,31 @@ cmd=$(jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
 prod_pattern='deploy\.prod\.env|deploy-prod'
 prod_pattern+='|PORTAINER_ENDPOINT=["'\''[:space:]]*0*5([^0-9]|$)'
 prod_pattern+='|build-push\.(sh)?[[:space:]]+[^;&|]*[[:space:]]prod([[:space:]]|$)'
+# A raw `docker push` of a prod image is a production action too: prod pulls
+# :latest for these images from the registry, so overwriting a tag stages a prod
+# change and can break the rollback anchor. Denied even though other docker verbs
+# are allowed below.
+prod_pattern+='|docker[[:space:]]+push[[:space:]]+[^;&|]*(avuz-roundcube|avuz-imapproxy|avuz-password-broker)'
 if printf '%s' "$cmd" | grep -qE "$prod_pattern"; then
-  emit deny "Touches production (deploy.prod.env, endpoint 5, or build-push prod). Blocked for agents - run prod deploys yourself, outside the agent."
+  emit deny "Production action (prod env/endpoint, prod image push). Blocked for agents - run prod deploys yourself, outside the agent."
 fi
 
-# ---- Self-escalation ALWAYS prompts, even for staging. ----
-# The read-only allowlist (echo/printf/awk/find/sed -n) plus a redirect could
-# rewrite this hook or the permission rules that invoke it. Checked BEFORE the
-# staging allow so nothing auto-approves a change to the guardrails.
+# ---- Always prompts, even amid the allowed dev commands below. ----
+# Two classes that are NOT "reversible dev commands":
+#  - self-escalation: a redirect could rewrite this hook or the permission rules
+#    that invoke it (checked before any allow, so nothing auto-approves a change
+#    to the guardrails);
+#  - host root / disk destroyers: sudo (host privilege escalation) and dd (raw
+#    device writes) are not git-recoverable and are never part of this workflow.
 escalation_pattern='>[[:space:]]*[^[:space:];&|]*\.claude/'
 escalation_pattern+='|(tee|cp|ln|mv)[[:space:]]+[^;&|]*\.claude/'
 escalation_pattern+='|find[[:space:]]+[^;&|]*(-delete|-exec|-execdir|-ok)'
 escalation_pattern+='|awk[[:space:]]+[^;&|]*(print|printf)[^;&|]*>'
 escalation_pattern+='|awk[[:space:]]+[^;&|]*(system\(|close\()'
 escalation_pattern+='|sed[[:space:]]+[^;&|]*[^a-zA-Z]w[[:space:]]+[^[:space:]]'
+escalation_pattern+='|(^|[;&|[:space:]])(sudo|dd)[[:space:]]'
 if printf '%s' "$cmd" | grep -qE "$escalation_pattern"; then
-  emit ask "Could modify the agent's own guardrails or delete files - explicit approval required."
+  emit ask "Modifies guardrails, or is host-root / a disk destroyer (sudo/dd) - explicit approval required."
 fi
 
 # ---- Tier 2: STAGING infra + read-only ops -> allow (no prompt). ----
@@ -55,20 +64,27 @@ fi
 staging_pattern='scripts/portainer-exec\.sh|scripts/logs\.sh'
 staging_pattern+='|build-push\.(sh)?[[:space:]]+[^;&|]*[[:space:]]staging([[:space:]]|$)'
 staging_pattern+='|scripts/deploy\.sh[[:space:]]+[^;&|]*avuz-mail-roundcube-2'
+# Reversible dev-loop commands the operator asked to allow: git/gh publish (a
+# push is force-reversible and does not reach prod infra), and local docker run/
+# build/container lifecycle. Prod image pushes are denied in Tier 1 above, and
+# sudo/dd are gated above, so those never reach here.
+staging_pattern+='|git[[:space:]]+push|gh[[:space:]]+(pr|release)'
+staging_pattern+='|docker[[:space:]]+(run|build|buildx|exec|create|start|stop|restart|kill|rm|cp|tag|logs|pull)'
+staging_pattern+='|docker[[:space:]]+compose[[:space:]]+(.*[[:space:]])?(up|down|restart|stop|start|build|logs)([[:space:]]|$)'
 if printf '%s' "$cmd" | grep -qE "$staging_pattern"; then
-  emit allow "Staging-only build/deploy/inspect (non-prod, recreatable)."
+  emit allow "Staging/local, reversible (non-prod, git-recoverable or recreatable)."
 fi
 
-# ---- Tier 3: everything else that publishes or mutates -> ask. ----
+# ---- Tier 3: remaining publish/mutate that is neither clearly prod nor clearly
+# reversible dev-loop -> ask. ----
 gate_pattern='scripts/deploy\.sh|build-base\.sh|build-all\.sh'
-gate_pattern+='|git[[:space:]]+push|docker[[:space:]]+(exec|run|rm|push|kill|stop|start|restart|cp)'
-gate_pattern+='|docker[[:space:]]+compose[[:space:]]+(.*[[:space:]])?(up|down|restart|stop|start)([[:space:]]|$)'
-gate_pattern+='|docker[[:space:]]+buildx|gh[[:space:]]+(pr|release|api[[:space:]]+.*-X[[:space:]]*(POST|PUT|PATCH|DELETE))'
-gate_pattern+='|(^|[;&|[:space:]])(sudo|rm|mv|chown|tee|dd)[[:space:]]'
+gate_pattern+='|docker[[:space:]]+push'
+gate_pattern+='|gh[[:space:]]+api[[:space:]]+.*-X[[:space:]]*(POST|PUT|PATCH|DELETE)'
+gate_pattern+='|(^|[;&|[:space:]])(rm|mv|chown|tee)[[:space:]]'
 gate_pattern+='|curl[[:space:]].*(-o|-O|--output)[[:space:]]'
 gate_pattern+='|>[[:space:]]*/(etc|usr|bin|sbin|var|opt|Library|System)/'
 if printf '%s' "$cmd" | grep -qE "$gate_pattern"; then
-  emit ask "Reaches deployed infrastructure, publishes, or mutates a container - explicit approval required."
+  emit ask "Publishes, mutates infra, or writes/deletes files - explicit approval required."
 fi
 
 exit 0
