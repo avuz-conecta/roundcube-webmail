@@ -81,14 +81,31 @@ class avuz_filter_runner
                 $acted++;
             }
         }
+        $store->set_state($user, $folder, $maxUid, $uidv);
+
         // Tell the client the new unread count for every folder we just filed into.
         // Without this the destination badge never updates: we move messages via
         // $storage->move_message() directly, which bypasses move.php:128 where core
         // would normally push it. Same approach as plugins/archive/archive.php:291.
-        foreach (array_keys($filled) as $filled_folder) {
-            rcmail_action_mail_index::send_unread_count($filled_folder, true);
+        //
+        // MUST run after set_state() and MUST be individually guarded: every flag,
+        // forward and move for this batch has already happened against live IMAP by
+        // this point, so the watermark has to advance regardless of whether this
+        // purely cosmetic badge push succeeds. If send_unread_count() throws (e.g.
+        // $storage->count() on a dropped/timed-out IMAP connection through the
+        // imapproxy sidecar) and this loop still sat before set_state(), the
+        // exception would propagate to run()'s catch and set_state() would never
+        // execute — the next pass would restart from the stale watermark and
+        // re-match the same UIDs, causing forward-only rules to send duplicate
+        // outbound email. Do not move this back above set_state().
+        try {
+            foreach (array_keys($filled) as $filled_folder) {
+                rcmail_action_mail_index::send_unread_count($filled_folder, true);
+            }
+        } catch (\Throwable $e) {
+            rcube::write_log('errors', 'avuz_filters: unread count push failed: ' . $e->getMessage());
         }
-        $store->set_state($user, $folder, $maxUid, $uidv);
+
         return $acted;
     }
 
