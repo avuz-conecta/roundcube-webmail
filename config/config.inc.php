@@ -131,6 +131,7 @@ $config['plugins'] = [
     'password',
     'avuz_prefetch',
     'avuz_poll_scope',
+    'avuz_search_notice',
 ];
 
 // -- New-mail polling scope --

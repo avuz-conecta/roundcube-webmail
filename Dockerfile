@@ -23,6 +23,7 @@ COPY plugins/nextcloud_sso /var/www/roundcube/plugins/nextcloud_sso
 COPY plugins/avuz_prefetch /var/www/roundcube/plugins/avuz_prefetch
 COPY plugins/avuz_filters /var/www/roundcube/plugins/avuz_filters
 COPY plugins/avuz_poll_scope /var/www/roundcube/plugins/avuz_poll_scope
+COPY plugins/avuz_search_notice /var/www/roundcube/plugins/avuz_search_notice
 COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
 COPY skins/avuz /var/www/roundcube/skins/avuz
 # elastic mail.html: the "Sent date" sort option is removed. Zoho advertises no
