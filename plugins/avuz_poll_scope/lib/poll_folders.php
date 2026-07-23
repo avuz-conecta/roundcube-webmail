@@ -63,4 +63,45 @@ class avuz_poll_folders
 
         return $pos === false ? $folder : substr($folder, $pos + strlen($delimiter));
     }
+
+    /**
+     * Decide which folders check_recent.php should end up polling, given the
+     * list core already built and the (already resolved, already capped)
+     * allowlist. Pure so it can be unit tested without a Roundcube bootstrap;
+     * avuz_poll_scope::bound_folders() supplies the inputs.
+     *
+     *   - $all true  — core walked EVERY subscribed folder (the expensive case
+     *     this plugin exists to bound). REPLACE: return INBOX, plus $current
+     *     when non-empty, plus $allowlist_folders.
+     *   - $all false — core made a deliberate, already-bounded choice (an open
+     *     search's folders, or current+INBOX; see bound_folders()'s docblock).
+     *     PRESERVE $core_folders in order and APPEND $allowlist_folders. Never
+     *     remove anything core chose — that was the shipped regression this
+     *     method exists to prevent.
+     *
+     * $allowlist_folders is not re-filtered or re-capped here; that already
+     * happened in avuz_poll_folders::select().
+     *
+     * @param string[] $core_folders      $args['folders'] as core built it
+     * @param bool     $all               $args['all'] from the check_recent hook
+     * @param string   $current           the currently open folder, '' if none
+     * @param string[] $allowlist_folders resolved allowlist, already capped
+     *
+     * @return string[] de-duplicated list, first occurrence wins
+     */
+    public static function merge(array $core_folders, bool $all, string $current, array $allowlist_folders): array
+    {
+        if ($all) {
+            $folders = ['INBOX'];
+            if ($current !== '') {
+                $folders[] = $current;
+            }
+            $folders = array_merge($folders, $allowlist_folders);
+        }
+        else {
+            $folders = array_merge($core_folders, $allowlist_folders);
+        }
+
+        return array_values(array_unique($folders));
+    }
 }

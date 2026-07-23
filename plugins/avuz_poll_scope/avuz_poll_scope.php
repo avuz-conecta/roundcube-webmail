@@ -82,6 +82,10 @@ class avuz_poll_scope extends rcube_plugin
      * from what core built. Do not "simplify" this back to an unconditional
      * replace: that's the bug this comment exists to prevent.
      *
+     * The actual branch decision above is a pure function — avuz_poll_folders::
+     * merge() — so it can be unit tested. This method only gathers the inputs
+     * (subscribed list, delimiter, allowlist, current folder) and delegates.
+     *
      * Accepted trade-off: the manual "Check for new mail" request also carries
      * _search (app.js check_recent_params(), ~line 9797), and check_recent.php:42
      * forces check_all true for any non-'refresh' action — so an open search plus
@@ -110,21 +114,12 @@ class avuz_poll_scope extends rcube_plugin
             }
         }
 
-        if (!empty($args['all'])) {
-            // Branch (a): core walked every folder. Replace with the bounded set.
-            $folders = ['INBOX'];
-            if ($current !== '') {
-                $folders[] = $current;
-            }
-            $folders = array_merge($folders, $allowlist_folders);
-        }
-        else {
-            // Branch (b) or (c): core already built the right list (an open
-            // search's folders, or current+INBOX). Preserve it; only add to it.
-            $folders = array_merge((array) $args['folders'], $allowlist_folders);
-        }
-
-        $args['folders'] = array_values(array_unique($folders));
+        $args['folders'] = avuz_poll_folders::merge(
+            (array) $args['folders'],
+            !empty($args['all']),
+            $current,
+            $allowlist_folders
+        );
 
         return $args;
     }
