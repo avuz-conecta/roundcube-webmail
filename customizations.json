@@ -159,6 +159,17 @@
       "description": "Pipelined multi-folder search: writes every SELECT+SEARCH pair to the one IMAP connection before reading any reply, collapsing N x 2 round trips into roughly one. Includes desync detection and a fallback to the existing serial path.",
       "risk": "high",
       "notes": "Zoho advertises no SORT, THREAD, MULTISEARCH or QRESYNC, so all-folder search costs N x 2 RTT serially; measured 55.2s -> 6.4s for a 107-folder account. BOTH files need their Dockerfile COPY or the patch is inert and search silently reverts to serial — that was caught only because a staging smoke test grepped the running image. Depends on rcube_imap_generic::execute() keeping its write-then-read structure and on putLineC's LITERAL- non-synchronizing path; re-verify both after any rebase. Any tag arriving out of order must close the connection and fall back."
+    },
+    {
+      "id": "remove-sentdate-sort",
+      "type": "core-patch",
+      "paths": [
+        "skins/elastic/templates/mail.html",
+        "Dockerfile"
+      ],
+      "description": "Removes the 'Sent date' option from the message-list sort menu.",
+      "risk": "low",
+      "notes": "Zoho advertises no SORT capability, so Roundcube cannot ask the server to order a folder and must FETCH 1:* (UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (DATE)]) across the whole folder and sort in PHP. Measured on prod: one user sorting by date saw 82s list loads on a ~20k-message INBOX (40k response lines in a single FETCH); switching to arrival took the same list to ~1.2s. STILL REACHABLE: subject, fromto, from, to, cc and size have the SAME cost — only 'arrival' and 'none' use the server's natural order. Removing just 'date' addresses the option a user actually picked, not the underlying class of problem. A real fix is either a local sort index or restricting the menu to arrival/none."
     }
   ]
 }

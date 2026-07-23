@@ -25,6 +25,12 @@ COPY plugins/avuz_filters /var/www/roundcube/plugins/avuz_filters
 COPY plugins/avuz_poll_scope /var/www/roundcube/plugins/avuz_poll_scope
 COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
 COPY skins/avuz /var/www/roundcube/skins/avuz
+# elastic mail.html: the "Sent date" sort option is removed. Zoho advertises no
+# SORT capability, so ordering by the Date: header forces Roundcube to FETCH the
+# date of EVERY message in the folder and sort locally — measured at 82s on a
+# 20k-message INBOX, against ~1.2s for arrival. Without this COPY the build uses
+# the stock template and the option comes back. See customizations.json.
+COPY skins/elastic/templates/mail.html /var/www/roundcube/skins/elastic/templates/mail.html
 # Core patches (overlay individual patched files from the release tarball).
 # rcube_washtml.php: '=' base64-padding fix — without this COPY the build uses
 # the stock (buggy) file and blank-signature images persist. See customizations.json.
