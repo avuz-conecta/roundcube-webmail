@@ -17,20 +17,42 @@ class avuz_filters extends rcube_plugin
         $this->ensure_schema();
 
         // Triggers (in-session): first sort on login, then on every mail refresh.
-        // 'refresh' is the ONLY trigger we hook here — do not add 'new_messages'
-        // back. In program/actions/mail/check_recent.php, 'new_messages' fires at
-        // line 96, inside the per-folder loop and BEFORE the INBOX message list is
-        // built; 'refresh' fires at line 207, after that list has already been
-        // built and queued to the client. Running the filter pass on
-        // 'new_messages' moves matched mail out of INBOX mid-loop, which
-        // invalidates the folder's cached count; the subsequent cached
-        // count() read at line 129 then returns 0 and message_list.clear(true)
-        // wipes the list with nothing to repopulate it (reproduced: INBOX goes
-        // empty for one refresh cycle, fixed by a manual refresh). Keeping only
-        // 'refresh' means a newly-arrived message can stay visible in INBOX for
-        // one refresh cycle before being filed away — an accepted trade-off,
-        // and strictly better than the list going empty.
+        //
+        // We hook 'check_recent' AND 'refresh' — never 'new_messages'. Ordering,
+        // in program/actions/mail/check_recent.php's single run():
+        //   line  66  exec_hook('check_recent', ...)  BEFORE the per-folder loop
+        //   line  96  exec_hook('new_messages', ...)  INSIDE the loop, before the
+        //             INBOX message list is built
+        //   line 207  exec_hook('refresh', ...)        AFTER the loop and the list
+        //
+        // 'check_recent' is primary: it runs before the loop reads any folder
+        // status or message count, so our UID MOVE completes first and the loop
+        // builds the list from already-consistent state — a message filed by a
+        // rule is gone from INBOX and present in its destination on the FIRST
+        // refresh, with no stale-count side effect to worry about.
+        //
+        // 'refresh' stays registered as a fallback: it also fires on its own from
+        // program/include/rcmail.php:292, for plain 'refresh' actions that don't
+        // post '_folderlist' or '_list' — a request check_recent.php's run()
+        // exits before line 36 without touching any hook. Keeping 'refresh' means
+        // the filter pass still runs on those requests. avuz_run_guard makes the
+        // two registrations mutually exclusive per request, and since
+        // 'check_recent' (line 66) always fires before 'refresh' (line 207)
+        // whenever both apply, 'check_recent' wins and 'refresh' is a no-op then.
+        //
+        // 'new_messages' must NEVER be re-added: it fires mid-loop, after
+        // check_recent.php has already cached a per-folder count from the
+        // pre-move state (line 88) and before the list is built. Filing a
+        // message out of INBOX there invalidates that cached count for INBOX;
+        // the later cached count() read at line 129 then returns 0 and
+        // message_list.clear(true) wipes the list with nothing to repopulate it
+        // (reproduced: INBOX went empty for one refresh cycle, fixed only by a
+        // manual refresh; confirmed on the wire — that request issued no
+        // UID SEARCH ALL at all). 'check_recent' gets the same "before the user
+        // sees stale mail" benefit without that hazard, because it runs before
+        // any folder status or count is read at all.
         $this->add_hook('login_after', [$this, 'on_login']);
+        $this->add_hook('check_recent', [$this, 'on_new_messages']);
         $this->add_hook('refresh', [$this, 'on_new_messages']);
 
         // Settings UI + manual "apply to existing" action.
