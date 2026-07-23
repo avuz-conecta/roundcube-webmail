@@ -122,6 +122,114 @@ class Framework_ImapGenericPipelined extends PHPUnit\Framework\TestCase
         $this->assertFalse($imap->expose_readPipelined('A0001'));
         $this->assertFalse($imap->connected());
     }
+
+    /** Builds the canned server side of a successful N-folder pipelined search. */
+    private function replies(array $folders, int $first_tag = 1): string
+    {
+        $out = '';
+        $tag = $first_tag;
+
+        foreach ($folders as $folder => $uids) {
+            $out .= "* 3 EXISTS\r\n";
+            $out .= sprintf("A%04d OK [READ-WRITE] Select completed\r\n", $tag++);
+            $out .= "* ESEARCH (TAG \"\") UID ALL $uids\r\n";
+            $out .= sprintf("A%04d OK Search completed\r\n", $tag++);
+        }
+
+        return $out;
+    }
+
+    function test_searchMulti_returns_one_result_per_folder_in_order()
+    {
+        $folders = ['INBOX' => '1,4', 'Sent' => '7', 'Archive' => '2:5'];
+        list($imap, $server) = $this->connection($this->replies($folders));
+
+        $results = $imap->searchMulti(array_keys($folders), 'HEADER SUBJECT "x"', true);
+
+        $this->assertSame(['INBOX', 'Sent', 'Archive'], array_keys($results));
+        $this->assertSame(['1', '4'], $results['INBOX']->get());
+        $this->assertSame(['7'], $results['Sent']->get());
+        $this->assertSame(['2', '3', '4', '5'], $results['Archive']->get());
+    }
+
+    function test_searchMulti_writes_every_command_before_reading_any_reply()
+    {
+        // No replies at all, and a non-blocking socket: the first read fails.
+        // A serial implementation would therefore have written only the first
+        // SELECT. A pipelined one has already written all six commands.
+        list($imap, $server) = $this->connection('');
+        stream_set_blocking($imap->socket(), false);
+
+        $this->assertFalse($imap->searchMulti(['INBOX', 'Sent', 'Archive'], 'HEADER SUBJECT "x"', true));
+
+        $sent = $this->sent($server);
+
+        $this->assertSame(3, substr_count($sent, ' SELECT '), 'all SELECTs must be on the wire');
+        $this->assertSame(3, substr_count($sent, ' UID SEARCH '), 'all SEARCHes must be on the wire');
+        $this->assertStringContainsString("A0001 SELECT INBOX\r\nA0002 UID SEARCH ", $sent);
+    }
+
+    function test_searchMulti_sends_the_same_command_text_as_the_serial_path()
+    {
+        list($imap, $server) = $this->connection('');
+        stream_set_blocking($imap->socket(), false);
+
+        $imap->searchMulti(['INBOX'], 'UNDELETED HEADER SUBJECT "x"', true);
+
+        $this->assertStringContainsString(
+            'A0002 UID SEARCH RETURN (ALL) UNDELETED HEADER SUBJECT "x"' . "\r\n",
+            $this->sent($server)
+        );
+    }
+
+    function test_searchMulti_gives_up_when_any_folder_replies_not_ok()
+    {
+        $replies = "* 3 EXISTS\r\nA0001 OK [READ-WRITE] Select completed\r\n"
+            . "* ESEARCH (TAG \"\") UID ALL 1\r\nA0002 OK Search completed\r\n"
+            . "A0003 NO Mailbox doesn't exist: Gone\r\n"
+            . "A0004 BAD No mailbox selected\r\n";
+
+        list($imap, $server) = $this->connection($replies);
+
+        $this->assertFalse($imap->searchMulti(['INBOX', 'Gone'], 'HEADER SUBJECT "x"', true),
+            'a partial answer must never be returned as a complete one');
+        $this->assertTrue($imap->connected(),
+            'the batch drained cleanly, so the connection is still usable for the serial retry');
+    }
+
+    function test_searchMulti_clears_the_selected_mailbox_state()
+    {
+        $folders = ['INBOX' => '1', 'Sent' => '2'];
+        list($imap, $server) = $this->connection($this->replies($folders));
+
+        $imap->searchMulti(array_keys($folders), 'HEADER SUBJECT "x"', true);
+
+        $this->assertNull($imap->selected, 'a later select() must not short-circuit on a stale folder');
+        $this->assertArrayNotHasKey('EXISTS', $imap->data);
+        $this->assertArrayNotHasKey('UIDNEXT', $imap->data);
+    }
+
+    function test_searchMulti_chunks_batches_so_replies_cannot_deadlock()
+    {
+        $folders = [];
+        for ($i = 0; $i < 30; $i++) {
+            $folders["F$i"] = '1';
+        }
+
+        list($imap, $server) = $this->connection($this->replies($folders));
+
+        $results = $imap->searchMulti(array_keys($folders), 'HEADER SUBJECT "x"', true);
+
+        $this->assertCount(30, $results);
+        $this->assertSame(['1'], $results['F29']->get());
+    }
+
+    function test_searchMulti_refuses_an_empty_folder_list()
+    {
+        list($imap, $server) = $this->connection('');
+
+        $this->assertFalse($imap->searchMulti([], 'HEADER SUBJECT "x"', true));
+    }
 }
 
 /**

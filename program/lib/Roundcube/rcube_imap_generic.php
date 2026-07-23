@@ -76,6 +76,12 @@ class rcube_imap_generic
     const COMMAND_LASTLINE   = 4;
     const COMMAND_ANONYMIZED = 8;
 
+    // Folders per pipelined SELECT+SEARCH batch. The client writes without
+    // reading, so a batch's replies must fit the socket buffers or both ends
+    // block. 25 pairs is ~5kB of commands and, with ESEARCH compacting results
+    // to ranges, a few kB of replies.
+    const SEARCH_PIPELINE_CHUNK = 25;
+
     const DEBUG_LINE_LENGTH = 4098; // 4KB + 2B for \r\n
 
 
@@ -2094,6 +2100,89 @@ class rcube_imap_generic
             'code'     => $code,
             'response' => rtrim(substr($response, 0, -strlen($line)), "\r\n"),
         ];
+    }
+
+    /**
+     * Executes SELECT + SEARCH for many folders on one connection, pipelined.
+     *
+     * Every command in a batch is written before any reply is read, so N
+     * folders cost roughly one round trip instead of 2N. The server performs
+     * exactly the same work; only the waiting disappears.
+     *
+     * The run is all-or-nothing. Anything other than a clean OK for every
+     * command returns false, and the caller must fall back to the serial
+     * search() path — which, unlike a pipeline, can retry a folder.
+     *
+     * @param array  $folders    Folder names to search, in order
+     * @param string $criteria   Searching criteria, identical for every folder
+     * @param bool   $return_uid Enable UID in result instead of sequence ID
+     * @param array  $items      Return items (MIN, MAX, COUNT, ALL)
+     *
+     * @return array|false rcube_result_index keyed by folder name, or false if the run cannot be trusted
+     */
+    public function searchMulti($folders, $criteria, $return_uid = false, $items = [])
+    {
+        if (!$this->connected() || empty($folders)) {
+            return false;
+        }
+
+        $command = $return_uid ? 'UID SEARCH' : 'SEARCH';
+        $params  = $this->searchParams($criteria, $items);
+        $results = [];
+
+        // A pipelined run walks through every folder and ends on an arbitrary
+        // one, so the cached selected-mailbox state describes nothing. Drop it
+        // before the first command, not after, so an abandoned run leaves the
+        // connection in the same honest state as a completed one.
+        $this->clear_mailbox_cache();
+        unset($this->data['EXISTS'], $this->data['RECENT']);
+        $this->selected = null;
+
+        foreach (array_chunk($folders, self::SEARCH_PIPELINE_CHUNK) as $batch) {
+            $tags = [];
+
+            foreach ($batch as $folder) {
+                $select = $this->nextTag();
+                if ($this->putLineC($select . ' SELECT ' . $this->escape($folder)) === false) {
+                    return false;
+                }
+
+                $search = $this->nextTag();
+                if ($this->putLineC($search . ' ' . $command . ' ' . $params) === false) {
+                    return false;
+                }
+
+                $tags[] = [$folder, $select, $search];
+            }
+
+            // Read the whole batch before judging it, so a folder that failed
+            // leaves no unread replies behind for the next command to trip on.
+            $failed = false;
+
+            foreach ($tags as $tag) {
+                list($folder, $select, $search) = $tag;
+
+                $selected = $this->readPipelined($select);
+                $found    = $selected === false ? false : $this->readPipelined($search);
+
+                if ($selected === false || $found === false) {
+                    return false;
+                }
+
+                if ($selected['code'] != self::ERROR_OK || $found['code'] != self::ERROR_OK) {
+                    $failed = true;
+                    continue;
+                }
+
+                $results[$folder] = new rcube_result_index($folder, $found['response']);
+            }
+
+            if ($failed) {
+                return false;
+            }
+        }
+
+        return $results;
     }
 
     /**
