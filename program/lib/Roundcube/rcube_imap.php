@@ -1651,8 +1651,17 @@ class rcube_imap extends rcube_storage
 
             $searcher = new rcube_imap_search($this->options, $this->conn);
 
-            // set limit to not exceed the client's request timeout
-            $searcher->set_timelimit(60);
+            // Set limit to not exceed the client's request timeout. With
+            // progressive search this is also the repaint interval: the shorter
+            // it is, the sooner the user sees the first rows, at the cost of
+            // more continuation round trips. Configurable so it can be tuned
+            // without a code change; upstream's value is the default.
+            //
+            // Read directly from config rather than $this->options: the
+            // 'search_timelimit' key is not among those rcube::storage_init()
+            // passes through when building $this->options, so it would always
+            // be null there.
+            $searcher->set_timelimit((int) rcube::get_instance()->config->get('imap_search_timelimit', 60));
 
             // continue existing incomplete search
             if (!empty($this->search_set) && $this->search_set->incomplete && $search == $this->search_string) {

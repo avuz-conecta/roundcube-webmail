@@ -48,6 +48,11 @@ COPY program/actions/mail/search.php /var/www/roundcube/program/actions/mail/sea
 # searches silently fall back to one SELECT+SEARCH round trip per folder.
 COPY program/lib/Roundcube/rcube_imap_generic.php /var/www/roundcube/program/lib/Roundcube/rcube_imap_generic.php
 COPY program/lib/Roundcube/rcube_imap_search.php /var/www/roundcube/program/lib/Roundcube/rcube_imap_search.php
+# rcube_imap.php: search time limit read from config (imap_search_timelimit)
+# instead of a hardcoded 60s. With progressive search that value is the repaint
+# interval. Without this COPY the build uses the stock file and the setting is
+# silently ignored.
+COPY program/lib/Roundcube/rcube_imap.php /var/www/roundcube/program/lib/Roundcube/rcube_imap.php
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \

@@ -219,6 +219,20 @@ $config['session_lifetime'] = 10080; // 1 week (7 * 24 * 60 min)
 // Cost: new-mail notification is up to 2 minutes late instead of 1.
 $config['refresh_interval'] = 120;
 
+// -- Search pacing --
+// With progressive search (see docs/superpowers/specs/2026-07-23-progressive-search-design.md)
+// this is the repaint interval, not just a safety cap: each round searches for
+// this long, renders what it found, and asks the client to continue. Upstream
+// hardcoded 60s, which meant the first rows could be a minute away. 8s trades a
+// few more round trips for results that start appearing almost immediately.
+$config['imap_search_timelimit'] = 8;
+
+// Hard ceiling on a single logical search across all its continuation rounds.
+// Without this the client loops forever (app.js re-issues every 100ms), which is
+// the "search never finishes" complaint this work exists to fix. On reaching it
+// the user is told the search was stopped and the results are partial.
+$config['imap_search_total_timelimit'] = 120;
+
 // -- Session cookie — required for iframe embedding across subdomains --
 // SameSite=None allows the session cookie to be sent inside an iframe
 // served from a different subdomain. Requires HTTPS (Secure flag).
