@@ -674,10 +674,14 @@ Then, immediately after the closing `];` of the `$config['plugins']` array, add:
 // folder that never receives unread mail or a folder the user made themselves,
 // which our filters already report on when they file into it.
 //
-// Both 'Spam' and 'Junk' are listed because Zoho provisions different names per
-// account; the list is intersected with the user's subscribed folders, so a name
-// that does not exist costs nothing. Matched on the last path segment, so a
-// nested INBOX/Newsletter matches too. Capped at avuz_poll_folders::CAP.
+// 'Junk' is listed alongside 'Spam' as cheap insurance, NOT because Zoho names
+// the spam folder differently per account — that was checked and is false. Every
+// Zoho user here has 'Spam' in the system-folder block; where 'Junk' exists it is
+// an extra user folder that coexists with it, never a replacement. It is kept in
+// the list because we cannot see what fills it, and the cost of a folder a user
+// does not have is zero: the list is intersected with subscribed folders.
+// Matched on the last path segment, so a nested INBOX/Newsletter matches too.
+// Capped at avuz_poll_folders::CAP.
 $config['avuz_poll_folders'] = ['Spam', 'Junk', 'Newsletter', 'Notification'];
 ```
 
