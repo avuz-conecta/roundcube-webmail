@@ -54,10 +54,30 @@ class avuz_poll_scope extends rcube_plugin
     }
 
     /**
-     * Replace the folder list with the bounded set. Applied for every action, not
-     * just 'refresh': check_recent.php:42 forces check_all true whenever the
+     * Bound the folder list check_recent.php builds. Applied for every action,
+     * not just 'refresh': check_recent.php:42 forces check_all true whenever the
      * action is not 'refresh', which is why the manual check-recent cost 43s for
      * every user regardless of their preference.
+     *
+     * check_recent.php:52-63 builds $args['folders'] one of three ways, and it
+     * tells us which one via $args['all']:
+     *
+     *   (a) $args['all'] === true  — check_all_folders (or a non-refresh action)
+     *       walked EVERY subscribed folder. This is the expensive case we exist
+     *       to bound, so we REPLACE the list with {current, INBOX} plus the
+     *       allowlist, same as before.
+     *   (b) $args['all'] === false, an all-folders SEARCH is open — the list is
+     *       exactly the folders that search covers, so new matching mail in any
+     *       of them can appear in the results. Removing folders here silently
+     *       stales the search results.
+     *   (c) $args['all'] === false, no search — the list is already just
+     *       {current, INBOX}.
+     *
+     * Cases (b) and (c) are both core's own deliberate, already-bounded choice —
+     * we must not strip anything out of $args['folders'] in either. We only ever
+     * ADD the user's allowlist on top when $args['all'] is false. Do not
+     * "simplify" this back to an unconditional replace: that's the bug this
+     * comment exists to prevent.
      */
     function bound_folders($args)
     {
@@ -65,22 +85,32 @@ class avuz_poll_scope extends rcube_plugin
         $storage = $rcmail->get_storage();
         $current = (string) $storage->get_folder();
 
-        $folders = ['INBOX'];
-        if ($current !== '') {
-            $folders[] = $current;
-        }
-
+        $allowlist_folders = [];
         if ($this->user_wants_all) {
             $allowlist = (array) $rcmail->config->get('avuz_poll_folders', []);
 
             if (!empty($allowlist)) {
-                $folders = array_merge($folders, avuz_poll_folders::select(
+                $allowlist_folders = avuz_poll_folders::select(
                     (array) $storage->list_folders_subscribed('', '*', 'mail'),
                     $allowlist,
                     (string) $storage->get_hierarchy_delimiter(),
                     avuz_poll_folders::CAP
-                ));
+                );
             }
+        }
+
+        if (!empty($args['all'])) {
+            // Branch (a): core walked every folder. Replace with the bounded set.
+            $folders = ['INBOX'];
+            if ($current !== '') {
+                $folders[] = $current;
+            }
+            $folders = array_merge($folders, $allowlist_folders);
+        }
+        else {
+            // Branch (b) or (c): core already built the right list (an open
+            // search's folders, or current+INBOX). Preserve it; only add to it.
+            $folders = array_merge((array) $args['folders'], $allowlist_folders);
         }
 
         $args['folders'] = array_values(array_unique($folders));
