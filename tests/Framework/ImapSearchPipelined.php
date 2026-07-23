@@ -64,6 +64,85 @@ class Framework_ImapSearchPipelined extends PHPUnit\Framework\TestCase
         $this->assertSame(['1', '4'], $job->get_result()->get());
         $this->assertSame('INBOX', $job->get_folder());
     }
+
+    function test_exec_answers_every_folder_from_one_pipelined_pass()
+    {
+        $conn = new imap_search_conn_stub();
+        $conn->multi_result = [
+            'INBOX' => new rcube_result_index('INBOX', '* SEARCH 1 4'),
+            'Sent'  => new rcube_result_index('Sent', '* SEARCH 7'),
+        ];
+
+        $worker = new rcube_imap_search(['skip_deleted' => false], $conn);
+        $result = $worker->exec(['INBOX', 'Sent'], 'HEADER SUBJECT "x"');
+
+        $this->assertSame([['searchMulti', ['INBOX', 'Sent'], 'HEADER SUBJECT "x"']], $conn->calls,
+            'a pipelined pass must not be followed by per-folder searches');
+        $this->assertSame(3, $result->count());
+    }
+
+    function test_exec_falls_back_to_serial_when_the_pipeline_is_refused()
+    {
+        $conn = new imap_search_conn_stub();
+        $conn->multi_result   = false;
+        $conn->serial_results = ['INBOX' => '* SEARCH 1 4', 'Sent' => '* SEARCH 7'];
+
+        $worker = new rcube_imap_search(['skip_deleted' => false], $conn);
+        $result = $worker->exec(['INBOX', 'Sent'], 'HEADER SUBJECT "x"');
+
+        $this->assertSame(
+            [
+                ['searchMulti', ['INBOX', 'Sent'], 'HEADER SUBJECT "x"'],
+                ['search', 'INBOX', 'HEADER SUBJECT "x"'],
+                ['search', 'Sent', 'HEADER SUBJECT "x"'],
+            ],
+            $conn->calls
+        );
+        $this->assertSame(3, $result->count(), 'the fallback must produce the same answer');
+    }
+
+    function test_exec_does_not_pipeline_per_folder_criteria()
+    {
+        $conn = new imap_search_conn_stub();
+        $conn->serial_results = ['INBOX' => '* SEARCH 1', 'Sent' => '* SEARCH 7'];
+
+        $worker = new rcube_imap_search(['skip_deleted' => false], $conn);
+        $worker->exec(['INBOX', 'Sent'], ['INBOX' => 'HEADER SUBJECT "x"', 'Sent' => 'HEADER TO "y"']);
+
+        $this->assertSame(
+            [['search', 'INBOX', 'HEADER SUBJECT "x"'], ['search', 'Sent', 'HEADER TO "y"']],
+            $conn->calls,
+            'one pipeline sends one command shape; differing criteria must go serial'
+        );
+    }
+
+    function test_exec_does_not_pipeline_a_threaded_search()
+    {
+        $conn = new imap_search_conn_stub();
+
+        $worker = new rcube_imap_search(['skip_deleted' => false], $conn);
+        $worker->exec(['INBOX'], 'HEADER SUBJECT "x"', null, null, 'REFERENCES');
+
+        $this->assertEmpty(array_filter($conn->calls, static fn($call) => $call[0] === 'searchMulti'));
+    }
+
+    function test_exec_honours_the_kill_switch()
+    {
+        putenv('AVUZ_PIPELINED_SEARCH=0');
+
+        try {
+            $conn = new imap_search_conn_stub();
+            $conn->serial_results = ['INBOX' => '* SEARCH 1'];
+
+            $worker = new rcube_imap_search(['skip_deleted' => false], $conn);
+            $worker->exec(['INBOX'], 'HEADER SUBJECT "x"');
+
+            $this->assertSame([['search', 'INBOX', 'HEADER SUBJECT "x"']], $conn->calls);
+        }
+        finally {
+            putenv('AVUZ_PIPELINED_SEARCH');
+        }
+    }
 }
 
 /**
