@@ -34,6 +34,17 @@ if ($useProxy) {
 }
 $config['imap_timeout'] = 15;
 
+// Disable ACL so users can rename their own folders. Zoho advertises the ACL
+// capability but NOT RIGHTS (RFC 4314), so rcube_imap::folder_info() runs
+// MYRIGHTS and falls into the legacy-ACL branch, which marks a folder norename
+// unless its rights contain the old letter 'd'. Zoho actually returns RFC 4314
+// rights — e.g. `lrswikxtea`, where 'x' IS delete-mailbox — so the user has full
+// rename rights but Roundcube checks the wrong letter and greys out the name
+// field (verified on the wire, MYRIGHTS "<folder>" lrswikxtea). With ACL off,
+// folder_info skips MYRIGHTS and uses namespace: personal folders are renamable.
+// Safe here — we don't load the acl plugin and this tenant has no folder sharing.
+$config['imap_disabled_caps'] = ['ACL'];
+
 // NOTE: skip_deleted is deliberately left at its default (false).
 // Setting it true would enable ESEARCH on index queries (compact UID ranges
 // instead of ~16,000 individual UIDs), but it was evaluated and rejected —

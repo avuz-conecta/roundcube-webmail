@@ -39,7 +39,7 @@
       ],
       "description": "Roundcube config: Zoho IMAP (imap.zoho.com:993 SSL) and SMTP (smtp.zoho.com:587 TLS), Redis/DB cache with messages_cache enabled, session_storage=redis when REDIS_HOST is set (SQLite sessions hit 'database is locked', causing dropped session writes and premature logouts — NOT the blank-signature bug, which was washtml; see washtml-base64-padding-fix), pt_BR locale, 'Conecta Mail' product name, identity_image_size=128 (doubled from upstream 64) for larger HTML-signature images.",
       "risk": "low",
-      "notes": "All secrets come from env vars. ROUNDCUBE_DES_KEY must never change after first deploy or stored passwords become unreadable."
+      "notes": "All secrets come from env vars. ROUNDCUBE_DES_KEY must never change after first deploy or stored passwords become unreadable. imap_disabled_caps=['ACL']: Zoho advertises ACL but not RIGHTS, so folder_info's MYRIGHTS check marks personal folders norename (checks legacy 'd', Zoho returns RFC4314 'x'). Disabling ACL restores folder rename. No acl plugin loaded; no folder sharing."
     },
     {
       "id": "docker",
