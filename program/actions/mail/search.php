@@ -157,21 +157,6 @@ class rcmail_action_mail_search extends rcmail_action_mail_index
         if (!empty($result_h)) {
             $count = $rcmail->storage->count($mbox, $rcmail->storage->get_threading() ? 'THREADS' : 'ALL');
 
-            // AVUZ PATCH — a continuation round re-lists the FULL accumulated
-            // cross-folder result (list_messages() above returns the already
-            // correctly-sorted page 1 of the whole search set, see
-            // rcube_imap::list_search_messages()), not just the newest
-            // folder's hits. The client only clears the list on the initial
-            // qsearch; continue_search() never does. Left alone it would
-            // dedupe-and-append the new rows after the ones it already has,
-            // scrambling the sort order. Telling it to clear first forces a
-            // clean rebuild in the correct order every round. The initial
-            // round is untouched: the client already clears there itself,
-            // and a second clear could race with it.
-            if (!empty($continue)) {
-                $rcmail->output->command('message_list.clear', true);
-            }
-
             self::js_message_list($result_h, false);
 
             // Only claim success once. While incomplete the client keeps its
