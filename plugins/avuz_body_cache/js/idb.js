@@ -1,6 +1,7 @@
 /* avuz_body_cache: IndexedDB store. One DB per origin, namespaced per user tag. */
 (function () {
   var DB = 'avuz_body_cache', STORE = 'bodies', META = 'meta';
+  var TTL_MS = 5 * 24 * 60 * 60 * 1000; // 5 days — disk hygiene; expired = miss + purge
   var dbp = null, now = function () { return Date.now(); };
 
   function openRaw() {
@@ -43,6 +44,10 @@
       return dbp.then(function (db) {
         return pReq(tx(db, STORE, 'readonly').get(k)).then(function (v) {
           if (!v) return null;
+          if (now() - (v.createdAt || 0) > TTL_MS) {   // expired -> purge + treat as miss
+            tx(db, STORE, 'readwrite').delete(k);
+            return null;
+          }
           v.lastAccess = now();
           tx(db, STORE, 'readwrite').put(v);
           return v;

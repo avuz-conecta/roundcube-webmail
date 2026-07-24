@@ -27,12 +27,20 @@
     doc.addEventListener('click', function (e) {
       var a = e.target && e.target.closest && e.target.closest('a[href]');
       if (!a) return;
+      if (/^(mailto|tel):/i.test(a.getAttribute('href') || '')) return; // let the OS handle
       if (/^https?:\/\//i.test(a.href) && a.hostname && a.hostname !== location.hostname) {
         a.setAttribute('target', '_blank');            // external -> new tab
         a.setAttribute('rel', 'noopener noreferrer');
         return;
       }
-      if (/^(mailto|tel):/i.test(a.getAttribute('href') || '')) return; // let the OS handle
+      // Attachment / message-part download or inline view (_action=get / _part=):
+      // let it proceed in a new tab on the FIRST click — it never navigates the
+      // message frame, so no upgrade-reload is needed.
+      if (/[?&]_action=get(?:&|$)/.test(a.href) || /[?&]_part=/.test(a.href)) {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+        return;
+      }
       e.preventDefault();                              // block the frame nav (no nested app)
       e.stopPropagation();
       realOpen(iframe);                                // upgrade to the real render
