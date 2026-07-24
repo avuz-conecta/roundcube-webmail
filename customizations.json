@@ -253,6 +253,14 @@
       "description": "A _preload=1 query flag on the show/preview action renders the body but suppresses marking the message \\Seen, so the avuz_body_cache background prefetch can warm the browser cache without marking mail read.",
       "risk": "low",
       "notes": "mail_read_time=0 makes show.php mark \\Seen immediately on render; the guard gates that single block. Re-check on rebase that the mark block still sits in show.php run() and that no other path marks \\Seen for a plain preview."
+    },
+    {
+      "id": "avuz-body-cache-plugin",
+      "type": "plugin",
+      "paths": ["plugins/avuz_body_cache", "config/config.inc.php", "Dockerfile"],
+      "description": "Browser-side IndexedDB message-body cache with proactive prefetch of visible+lookahead rows, for Zimbra-parity instant open. Warms Redis via avuz_prefetch, fetches the real preview render with _preload=1, stores sanitized HTML per user tag, opens via srcdoc. Gated by AVUZ_BODY_CACHE=1.",
+      "risk": "medium",
+      "notes": "Depends on the show.php _preload patch (show-preload-no-mark-seen) and the multifolder avuz_prefetch warm. Per-user namespaced by HMAC(imap_user, des_key); drops the DB on identity change; clears on logout. Immutable bodies => no cache coherency. Bump avuz_body_cache_lib::SANITIZER_VERSION on any washtml/skin render change. Client JS is plain (no *.min twin)."
     }
   ]
 }

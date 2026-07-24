@@ -132,6 +132,7 @@ $config['plugins'] = [
     'avuz_prefetch',
     'avuz_poll_scope',
     'avuz_search_notice',
+    'avuz_body_cache',   // AVUZ: browser IndexedDB body cache (inert unless AVUZ_BODY_CACHE=1)
 ];
 
 // -- New-mail polling scope --
