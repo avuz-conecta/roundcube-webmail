@@ -140,6 +140,10 @@
 
   function prefetchPage() {
     if (rcmail.env.task !== 'mail') return;
+    // When avuz_body_cache is active, its controller warms Redis per row-folder
+    // (multifolder-aware) AND fills IndexedDB — this single-folder loop would only
+    // double-warm. Yield to it. When the body cache is off, this runs as before.
+    if (rcmail.env.avuz_body_cache) return;
     var folder = rcmail.env.mailbox;
 
     // Folder changed → supersede and warm the new folder. Same folder but the
