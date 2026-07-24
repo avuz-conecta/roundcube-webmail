@@ -20,8 +20,11 @@
         // per-row folder for multifolder search — the correct Roundcube API for this.
         var p = rcmail.params_from_uid(id, {});
         var uid = p._uid, folder = p._mbox || rcmail.env.mailbox;
+        // The list row object carries an `.unread` boolean (app.js:1059
+        // `rows[uid].unread`), extended from env.messages — NOT a CSS class. Use it so
+        // a cache-hit open of an unread message actually marks it read.
         var row = rcmail.message_list && rcmail.message_list.rows[id];
-        var unread = !!(row && row.obj && row.obj.classList && row.obj.classList.contains('unread'));
+        var unread = !!(row && row.unread);
         avuzOpen.tryHit(uid, folder, unread).then(function (hit) {
           if (!hit) baseShow.call(rcmail, id, safe, preview);
         });
