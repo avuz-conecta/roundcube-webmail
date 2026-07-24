@@ -1,9 +1,19 @@
 /* avuz_body_cache: instant open from cache. Miss -> caller falls back to normal open. */
 (function () {
-  // Paint method proven by the Task 0 spike. (srcdoc variant shown.)
+  // Paint method proven by the Task 0 spike (srcdoc), with a <base> fix.
+  // srcdoc gives the frame NO document URL, so every relative / root-relative URL
+  // in the rendered message — Roundcube's own "load remote images" reload, asset
+  // paths, in-body links — resolves against the PARENT app page instead. That is
+  // what made "Permitir" navigate the frame to the whole app (nested Roundcube).
+  // Inject a <base> pointing at the app URL so they resolve as a real frame would.
   function paintFromCache(iframe, html) {
+    var base = location.href.split(/[?#]/)[0];
+    var tag = '<base href="' + base + '">';
+    var withBase = /<head[^>]*>/i.test(html)
+      ? html.replace(/<head([^>]*)>/i, '<head$1>' + tag)
+      : tag + html;
     iframe.removeAttribute('src');
-    iframe.srcdoc = html;
+    iframe.srcdoc = withBase;
   }
 
   window.avuzOpen = {
