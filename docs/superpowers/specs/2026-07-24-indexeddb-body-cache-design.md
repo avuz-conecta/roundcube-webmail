@@ -1,9 +1,30 @@
-# Browser-side IndexedDB cache of message bodies for instant reopen
+# Browser-side IndexedDB cache of message bodies for instant open
 
 **Date**: 2026-07-24
-**Status**: design — ready for team review
+**Status**: design — approved (brainstorm 2026-07-24), ready to plan
 **Builds on**: `2026-07-24-pipeline-only-search-design.md` (this is the "Out of scope" IndexedDB body cache deferred there)
 **Related code already shipped**: `plugins/avuz_prefetch/` (server-side Redis body cache)
+
+## Goal: Zimbra-parity instant open
+
+The client came from Zimbra, where opening mail — including search results — is
+near-instant. Even a Redis-warmed server render is ~100–300ms (PHP + browser↔server
+round-trip from Brazil), which cannot match that. The only way to hit ~0ms is to read
+the body from the **browser** with no network. So this cache is not just reactive
+(store-on-view, §8); it is **proactive**: it prefetches the bodies of the messages
+currently listed — visible rows plus a lookahead window — into IndexedDB *ahead of the
+click*, exactly as Zimbra/Gmail do. See §12.
+
+**Decisions locked in the 2026-07-24 brainstorm:**
+- **Fetch mechanism = per-message background fetch of the existing preview render**
+  (approach A), throttled, visible-first. Not a bulk endpoint (kept as a later
+  server-load optimization). Rationale: reuses Roundcube's exact washtml render (no
+  duplicate sanitization), delivers the clicked row's body soonest (parallel +
+  progressive), and rides the Redis warming that already exists.
+- **Lean on Redis; IndexedDB is the only new cache.** Bodies are immutable, so the two
+  tiers never need syncing — no two-cache management burden.
+- **Prefetch scope = visible + lookahead**, on **all listings** (folders and search).
+- **Eviction = moderate LRU** (~500 msgs / ~50 MB, clear on logout).
 
 ## 1. Context and motivation
 
@@ -311,3 +332,76 @@ proven. Document as a future item, not a deliverable.
 5. **Encryption-at-rest tenant policy**: is "do not enable for shared-machine
    tenants" an acceptable answer for the security review, or is a real at-rest scheme
    (accepting its limits) mandated by any Avuz compliance requirement?
+6. **`_preload` no-mark-seen mechanism** (§12): what is the exact hook to render the
+   preview body without setting `\Seen`? Confirm the show/preview action's mark-read
+   path (config `preview_pane_mark_read`, the client mark command, or a server mark in
+   `show.php`) and which one a `_preload=1` flag must suppress.
+7. **Lookahead window size + throttle**: how many rows beyond the viewport, and how many
+   concurrent fetches, before it becomes a load or bandwidth problem on the shared
+   PHP-FPM pool (single user is fine; many users prefetching at once is the risk)?
+8. **avuz_prefetch search warming**: `avuz_prefetch` warms Redis on folder-list render;
+   what is the cleanest hook to also warm it on a cross-folder **search** result set
+   (which spans many folders and is assembled in `search.php`)?
+
+## 12. Proactive prefetch (the Zimbra-parity layer)
+
+This is the core of the instant-open goal. The reactive cache (§8) makes *reopen* fast;
+this makes the **first** open of any listed message fast by filling IndexedDB before the
+click.
+
+### 12.1 Trigger and window
+
+On every message-list render — a folder open OR a search result — and on scroll/page
+change, the client computes a **prefetch window**: the currently-visible rows plus a
+lookahead (the next page and a few rows above/below). This is list-agnostic: the same
+controller runs for folder listings and search results.
+
+### 12.2 The prefetch controller (client)
+
+For each UID in the window, in priority order **selected row → visible rows →
+lookahead**:
+1. If a fresh IndexedDB entry already exists for the key, skip.
+2. Otherwise background-`fetch()` the existing preview render:
+   `?_action=preview&_uid=<uid>&_mbox=<folder>&_framed=1&_preload=1&_safe=<0|1>`.
+   Throttle to ~4–6 concurrent (HTTP/2 multiplexes them over one connection, so the
+   per-request cost is low). Each response is the sanitized body HTML.
+3. Store it in IndexedDB under the §5 key (user + folder + uid + uidvalidity + format +
+   safe + sanitizerVersion), updating `lastAccess` for LRU.
+
+The controller is cancellable: navigating away or issuing a new search abandons the
+in-flight window and starts a new one, so prefetch never competes with a real open.
+
+### 12.3 The `_preload` flag (server — the one non-trivial server touch)
+
+A background prefetch MUST NOT mark messages `\Seen` — the user has not opened them.
+Roundcube's preview/show path marks read. So `_preload=1` tells the server to render and
+sanitize the body but suppress the mark-read side effect (and any other state change:
+no `HIGHESTMODSEQ` bump attribution, no "last opened" tracking). Implemented as a small
+hook in the Avuz plugin, not a fork of the show action if avoidable. This is the single
+correctness-critical server change; everything else reuses the stock render.
+
+### 12.4 Open path with correct read-state
+
+- **Cache hit**: the open handler sets `iframe.srcdoc` from the cached HTML → ~0ms, no
+  network. Because the user *actually opened* it now, fire the real lightweight
+  mark-`\Seen` request (the normal `set_unread_message` path) so unread counters stay
+  correct. The body came from cache; only the tiny mark request touches the server.
+- **Cache miss / stale**: fall through to normal navigation (which marks read as usual),
+  then capture the sanitized body from the same-origin iframe and store it (§8).
+
+### 12.5 Server-side warming for search
+
+`avuz_prefetch` already warms Redis on folder-list render. Extend it to also warm on a
+search result set so the browser's prefetch `fetch()`es for search results hit warm
+Redis (~200ms) instead of cold Zoho (~1–3s). Without this, the first search-result
+prefetches are slow and may lose the race to the click; with it, search open is as
+instant as folder open. (Exact hook: §11 open question 8.)
+
+### 12.6 Why this is fast where it counts
+
+Open speed is identical to any cache-hit design (`srcdoc`, ~0ms). The prefetch mechanism
+(A) was chosen because it makes the **clicked** row's body ready soonest: parallel
+requests, visible-first priority, and each body usable the instant its own request
+returns (progressive), versus a bulk endpoint that must render the whole batch before
+anything is usable. Redis warming keeps each of those fetches server-fast. The result:
+by the time the user's eye moves to a row and clicks, its body is already on local disk.
