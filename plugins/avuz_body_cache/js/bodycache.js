@@ -10,7 +10,7 @@
       rcmail.addEventListener('afterlist', schedule);
       rcmail.addEventListener('listupdate', schedule);
       schedule();
-    });
+    }).catch(function () { /* private mode / blocked: degrade to no-op */ });
 
     // Try cache before a normal open — only for the preview-pane path.
     var baseShow = rcmail.show_message;
@@ -20,7 +20,9 @@
         // per-row folder for multifolder search — the correct Roundcube API for this.
         var p = rcmail.params_from_uid(id, {});
         var uid = p._uid, folder = p._mbox || rcmail.env.mailbox;
-        avuzOpen.tryHit(uid, folder).then(function (hit) {
+        var row = rcmail.message_list && rcmail.message_list.rows[id];
+        var unread = !!(row && row.obj && row.obj.classList && row.obj.classList.contains('unread'));
+        avuzOpen.tryHit(uid, folder, unread).then(function (hit) {
           if (!hit) baseShow.call(rcmail, id, safe, preview);
         });
         return;
@@ -28,6 +30,14 @@
       return baseShow.call(rcmail, id, safe, preview);
     };
 
-    rcmail.addEventListener('logout', function () { try { avuzIdb.clearAll(); } catch (e) {} });
+    // No reliable client 'logout' EVENT exists in rcmail. Best-effort clear when the
+    // logout COMMAND fires (navigation may cut it short — that is fine: the guaranteed
+    // control against cross-user exposure is the identity-change DB drop in idb.js,
+    // which fires on the next user's first load).
+    var baseCommand = rcmail.command;
+    rcmail.command = function (cmd) {
+      if (cmd === 'logout') { try { avuzIdb.clearAll(); } catch (e) {} }
+      return baseCommand.apply(this, arguments);
+    };
   });
 })();

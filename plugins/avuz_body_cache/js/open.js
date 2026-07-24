@@ -7,7 +7,7 @@
   }
 
   window.avuzOpen = {
-    tryHit: function (uid, folder) {
+    tryHit: function (uid, folder, unread) {
       if (!rcmail.env.avuz_body_cache) return Promise.resolve(false);
       var iframe = rcmail.env.contentframe && document.getElementById(rcmail.env.contentframe);
       if (!iframe) return Promise.resolve(false);    // no preview frame -> normal open
@@ -26,9 +26,13 @@
         rcmail.enable_command('reply', 'reply-all', 'reply-list', 'forward',
           'forward-attachment', 'forward-inline', 'print', 'delete', 'move', 'copy',
           'mark', 'viewsource', 'download', 'edit', 'open', 'more', true);
-        // The fast path skipped the render that marks read: mark it now (real open).
-        rcmail.set_unread_message(uid, folder);       // client unread counters
-        rcmail.http_post('mark', { _uid: uid, _mbox: folder, _flag: 'SEEN' }); // server \Seen
+        // The fast path skipped the render that marks read: mark it now (real open),
+        // but only when the message was actually unread (mirror core, which only marks
+        // inside the empty(SEEN) block).
+        if (unread) {
+          rcmail.set_unread_message(uid, folder);       // client unread counters
+          rcmail.http_post('mark', { _uid: uid, _mbox: folder, _flag: 'SEEN', _quiet: 1 }); // server \Seen
+        }
         return true;
       }).catch(function () { return false; });
     }

@@ -4,19 +4,29 @@
 
   function userTag() { return rcmail.env.avuz_cache_user; }
   function sanitizerV() { return rcmail.env.avuz_sanitizer_version; }
+  // Only mode 2 (always load remote images) renders unconditionally safe; every other
+  // mode (including contacts-only) must be prefetched blocked, since the per-message
+  // contacts decision cannot be pre-computed in a background fetch.
+  function safeMode() { return rcmail.env.avuz_show_images == 2 ? 1 : 0; }
+  // Known limitation, acceptable for v1: a live per-message format TOGGLE re-navigates
+  // with the same key and would serve the default-format cached body; rare, both sanitized.
+  function fmt() { return rcmail.env.avuz_default_format || 'html'; }
 
   function windowRows() {
-    // All rendered rows; each row carries uid and (for multifolder search) folder.
     var rows = (rcmail.message_list && rcmail.message_list.rows) || {}, out = [];
     for (var id in rows) {
-      var r = rows[id];
-      if (r && r.uid) out.push({ uid: String(r.uid), folder: r.folder || rcmail.env.mailbox });
+      if (!rows[id]) continue;
+      // Row id is the message uid, or the compound "uid-folder" in multifolder search.
+      // Resolve both exactly as the open path (params_from_uid / get_message_mailbox).
+      var uid = String(id).split('-')[0];
+      var folder = rcmail.get_message_mailbox(id);
+      if (uid) out.push({ uid: uid, folder: folder });
     }
-    return out; // rendered page already ~= visible + one page of lookahead in Elastic
+    return out;
   }
 
   function uidv(folder) { var m = rcmail.env.avuz_uidvalidity || {}; return m[folder] || '0'; }
-  function keyFor(folder, uid) { return userTag() + '|' + folder + '|' + uidv(folder) + '|' + uid + '|' + sanitizerV(); }
+  function keyFor(folder, uid) { return userTag() + '|' + folder + '|' + uidv(folder) + '|' + uid + '|' + safeMode() + '|' + fmt() + '|' + sanitizerV(); }
 
   function warmRedis(rows) {
     // Group into folder-qualified uid tokens, <=10 per POST (server caps at MAX_UIDS).
@@ -27,7 +37,7 @@
   }
 
   function fetchBody(row) {
-    var url = rcmail.url('preview', { _uid: row.uid, _mbox: row.folder, _framed: 1, _preload: 1, _safe: rcmail.env.avuz_show_images ? 1 : 0 });
+    var url = rcmail.url('preview', { _uid: row.uid, _mbox: row.folder, _framed: 1, _preload: 1, _safe: safeMode() });
     return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.text() : null; });
   }
 

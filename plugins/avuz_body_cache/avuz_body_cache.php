@@ -35,7 +35,15 @@ class avuz_body_cache extends rcube_plugin
         // The effective remote-image safety the prefetch should render with, so the
         // cached _safe matches what a real open shows. show_images is a config, not an
         // env var, so surface it explicitly.
-        $rcmail->output->set_env('avuz_show_images', (int) (bool) $rcmail->config->get('show_images'));
+        // Full integer mode: 0=never, 1=contacts-only, 2=always, 3=ask. Only mode 2 is an
+        // unconditional "load remote images"; the prefetch renders everything else _safe=0
+        // (blocked), because the per-message contacts decision (index.php check_safe) cannot
+        // be pre-computed in a background fetch.
+        $rcmail->output->set_env('avuz_show_images', (int) $rcmail->config->get('show_images'));
+        // Default render format used by preview when a message carries no per-message
+        // format override; part of the cache key (spec §5) so stale-format bodies never
+        // get served after a user changes their format preference.
+        $rcmail->output->set_env('avuz_default_format', $rcmail->config->get('prefer_html') ? 'html' : 'plain');
 
         $map  = [];
         $mbox = $rcmail->output->get_env('mailbox') ?: $rcmail->storage->get_folder();

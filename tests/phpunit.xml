@@ -54,6 +54,7 @@
       <file>./../plugins/avuz_filters/tests/filter_runner_test.php</file>
       <file>./../plugins/avuz_filters/tests/run_guard_test.php</file>
       <file>./../plugins/avuz_prefetch/tests/prefetch_cache_test.php</file>
+      <file>./../plugins/avuz_body_cache/tests/body_cache_test.php</file>
       <file>./../plugins/avuz_poll_scope/tests/poll_folders_test.php</file>
       <file>./../plugins/password/tests/ZohoBroker.php</file>
       <file>./../plugins/new_user_dialog/tests/NewUserDialog.php</file>
