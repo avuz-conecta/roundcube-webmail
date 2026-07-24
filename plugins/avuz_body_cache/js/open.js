@@ -16,13 +16,18 @@
         if (!rec) return false;
         // Preserve the state setup show_message would do before painting.
         rcmail.preview_id = uid;
-        rcmail.env.uid = uid;
+        // DO NOT set rcmail.env.uid here. get_single_uid() (app.js) is
+        // `this.env.uid || message_list.get_single_selection()` — during normal preview
+        // browsing the parent env.uid stays UNSET so it falls through to the list
+        // selection. Pinning env.uid to this message froze get_single_uid(), so every
+        // later click reopened the first-opened message. Reply/forward already target
+        // get_single_uid() = the highlighted row, so env.uid is unnecessary here.
         rcmail.show_contentframe(true);
         paintFromCache(iframe, rec.html);
         // SPIKE FINDING (Task 0): srcdoc renders the body but the framed page's scripts
         // do NOT re-enable the message toolbar in the srcdoc frame — so we enable the
-        // message-context commands ourselves (verified: reply then opens compose with the
-        // correct quoted body once env.uid is set). Match the set a normal open enables.
+        // message-context commands ourselves. (Belt-and-suspenders: msglist_select also
+        // enables message_commands on selection.) Match the set a normal open enables.
         rcmail.enable_command('reply', 'reply-all', 'reply-list', 'forward',
           'forward-attachment', 'forward-inline', 'print', 'delete', 'move', 'copy',
           'mark', 'viewsource', 'download', 'edit', 'open', 'more', true);
