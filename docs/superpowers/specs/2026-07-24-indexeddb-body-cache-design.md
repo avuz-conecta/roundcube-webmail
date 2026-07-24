@@ -246,7 +246,13 @@ existence are authoritative from the server list, never from this cache.**
 - **Private-mode / IndexedDB unavailable**: degrade to no-op, exactly as
   `prefetch.js` degrades its `sessionStorage` writes (`prefetch.js:29-31`).
 
-## 8. Integration approach (self-contained plugin, no core patch)
+## 8. Integration approach
+
+> **Superseded by §13** (2026-07-24 grill): the reactive "capture on view" in this
+> section is **dropped** in favour of prefetch-only (§13.1), and the `_preload`
+> mark-seen suppression is a **1-line show.php core patch** (§13.2), so the
+> "no core patch" goal no longer holds. Read §12 + §13 as authoritative; this
+> section is kept for the architectural context (iframe/srcdoc, keys) it establishes.
 
 Ship as a new Avuz plugin **`avuz_body_cache`** (client-heavy), mirroring the
 `avuz_prefetch` structure:
@@ -405,3 +411,83 @@ requests, visible-first priority, and each body usable the instant its own reque
 returns (progressive), versus a bulk endpoint that must render the whole batch before
 anything is usable. Redis warming keeps each of those fetches server-fast. The result:
 by the time the user's eye moves to a row and clicks, its body is already on local disk.
+
+## 13. Resolutions from the 2026-07-24 grill (authoritative)
+
+This section supersedes any conflicting detail above (notably §8's reactive
+capture-on-view, which is **dropped** — see 13.1). It records the code-grounded
+answers that resolved the open questions and the two design forks.
+
+### 13.1 Prefetch-only — reactive capture is dropped
+
+The cache is filled **exclusively** by the proactive prefetch controller (§12). A cache
+**miss falls through to a normal server open** — no reading of the rendered iframe DOM,
+no "message iframe loaded" event. This removes former open-question 1 entirely and
+deletes the trickiest, least-reliable part of the original design. Hit rate is still high
+because the controller prefetches visible + lookahead; anything the user can click has
+almost certainly been prefetched.
+
+### 13.2 The `_preload` flag is a 1-line core patch to show.php
+
+`mail_read_time = 0` (config), so `show.php:128` marks `\Seen` **immediately** on any
+preview render. A background prefetch must not do that. Resolution: gate that block with
+`&& empty($_GET['_preload'])`. Approach A (reuse the real preview render) is kept
+deliberately over a plugin render endpoint, to preserve **render fidelity** — the cached
+HTML must be byte-for-byte what a real open shows (flowed text, plain→html, CID handling,
+charset), which only the real render guarantees. Cost: `program/actions/mail/show.php`
+joins the Dockerfile overlay list + customizations.json. Confirmed no pre-mark hook
+exists to do this without the patch.
+
+### 13.3 Search is multifolder — warm and fetch per row-folder (built now)
+
+A search result spans many folders; each row's UID belongs to `row.folder`, NOT
+`env.mailbox`. Both the Redis warm and the browser preview fetch use the per-row folder.
+Concretely, built in this iteration:
+- **avuz_prefetch (server)**: `prefetch()` extended to accept per-UID folders (e.g. a
+  `{uid: folder}` map or `uid:folder` tokens) instead of a single `_mbox`, so it can warm
+  Redis for a multifolder set. `serve_cached_body` (read hook) is unchanged.
+- **controller (client)**: groups the visible+lookahead window by `row.folder`, warms
+  Redis per folder-batch via `plugin.avuz_prefetch`, then issues per-message preview
+  fetches with `_mbox = row.folder`.
+
+The Redis `message_part_body` hook is read-only (a preview render on a miss does NOT
+repopulate Redis — only the `plugin.avuz_prefetch` action stores), which is exactly why
+the explicit warm step stays. Warming makes each preview fetch Redis-fast (~200ms) rather
+than Zoho-cold (~1–3s) so the background prefetch beats the click on search too.
+
+### 13.4 One client controller supersedes prefetch.js's loop
+
+`prefetch.js`'s current single-folder client loop is folded into the new
+`avuz_body_cache` controller (multifolder-aware, fills both Redis via the warm POST and
+IndexedDB via the preview fetch). The `plugin.avuz_prefetch` **server** action stays
+(extended, 13.3). Throttle 3–4 concurrent, **defer while `rcmail.busy`** (reuse the exact
+bounded-defer pattern already in `prefetch.js`), cancel the in-flight window on
+navigation/new-search so prefetch never competes with a real open. Window: visible
+(`mail_pagesize=30`) + ~30 lookahead.
+
+### 13.5 Read-state on a cache-hit open
+
+Hit → `srcdoc` the cached HTML → fire `set_unread_message` (app.js:2575) + the server
+mark, because the fast path skipped the render that normally marks read. Unread counters
+stay correct in both single-folder and multifolder listings.
+
+### 13.6 Remaining open questions (narrowed)
+
+- **UIDVALIDITY surfacing cost**: confirm `folder_data()` is already warm during list
+  render so surfacing UIDVALIDITY per folder adds no extra Zoho round-trip (former Q4).
+- **Inline images**: bodies cache with inline images as `?_action=get&_part=` URLs, so
+  the body paints instantly but images re-fetch (Redis/HTTP-cache absorbed). Accepted for
+  v1; a companion image cache is out of scope (former Q2).
+- **Bulk endpoint (B)**: the scale escape hatch if per-message prefetch fetches exhaust
+  the 40-worker FPM pool under many concurrent users. Not built; the trigger to build it
+  is measured worker saturation (former Q on load).
+- **Encryption at rest**: unchanged from §5 — do not encrypt; rely on deletion + TTL +
+  per-tenant `AVUZ_BODY_CACHE` off switch; "do not enable for shared-machine tenants" is
+  the security-review answer unless compliance mandates otherwise.
+
+### 13.7 Implementation surface (what changes)
+
+- `program/actions/mail/show.php` — `_preload` mark-seen gate (core patch + Dockerfile + customizations.json).
+- `plugins/avuz_prefetch/` — `prefetch()` accepts per-UID folders (multifolder warm).
+- `plugins/avuz_body_cache/` (new) — server: emit env (`avuz_cache_user` HMAC, per-folder `uidvalidity`, `sanitizerVersion`, `AVUZ_BODY_CACHE` flag), include `bodycache.js`. Client `bodycache.js`: prefetch controller + IndexedDB store + open interception + eviction; supersedes `prefetch.js`'s client loop.
+- Dockerfile / customizations.json — overlay show.php and the new plugin; mind the `*.min.js` rule.
