@@ -1,19 +1,54 @@
 /* avuz_body_cache: instant open from cache. Miss -> caller falls back to normal open. */
 (function () {
-  // Paint method proven by the Task 0 spike (srcdoc), with a <base> fix.
-  // srcdoc gives the frame NO document URL, so every relative / root-relative URL
-  // in the rendered message — Roundcube's own "load remote images" reload, asset
-  // paths, in-body links — resolves against the PARENT app page instead. That is
-  // what made "Permitir" navigate the frame to the whole app (nested Roundcube).
-  // Inject a <base> pointing at the app URL so they resolve as a real frame would.
+  // Base URL for the srcdoc so root-absolute asset paths (/skins/...) resolve.
   function paintFromCache(iframe, html) {
     var base = location.href.split(/[?#]/)[0];
     var tag = '<base href="' + base + '">';
     var withBase = /<head[^>]*>/i.test(html)
       ? html.replace(/<head([^>]*)>/i, '<head$1>' + tag)
       : tag + html;
+    // Attach the navigation guard once the srcdoc document exists.
+    iframe.onload = function () { iframe.onload = null; guardFrame(iframe); };
     iframe.removeAttribute('src');
     iframe.srcdoc = withBase;
+  }
+
+  // A srcdoc frame has no URL, so the message's in-frame controls (Detalhes,
+  // Cabeçalhos, Texto simples, load-remote, links) whose handlers depend on the
+  // frame's own rcmail/UI — which isn't fully initialised here — fall through to
+  // their default href and navigate the frame to a full page (the whole app).
+  // Guard it: external links open in a new tab; ANY internal navigation is blocked
+  // and instead upgrades to a real, full-fidelity open of this message (the frame
+  // loads the real preview URL, Redis-warm ~200ms, where every control works).
+  function guardFrame(iframe) {
+    var doc;
+    try { doc = iframe.contentDocument; } catch (e) { return; }
+    if (!doc) return;
+    doc.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest && e.target.closest('a[href]');
+      if (!a) return;
+      if (/^https?:\/\//i.test(a.href) && a.hostname && a.hostname !== location.hostname) {
+        a.setAttribute('target', '_blank');            // external -> new tab
+        a.setAttribute('rel', 'noopener noreferrer');
+        return;
+      }
+      if (/^(mailto|tel):/i.test(a.getAttribute('href') || '')) return; // let the OS handle
+      e.preventDefault();                              // block the frame nav (no nested app)
+      e.stopPropagation();
+      realOpen(iframe);                                // upgrade to the real render
+    }, true);
+    doc.addEventListener('submit', function (e) { e.preventDefault(); realOpen(iframe); }, true);
+  }
+
+  // Swap the cached srcdoc for a real framed navigation of the current message.
+  // Bypasses show_message (and thus the cache), so all controls work natively.
+  function realOpen(iframe) {
+    var uid = rcmail.preview_id;
+    if (!uid) return;
+    var folder = rcmail.get_message_mailbox(uid);
+    var url = rcmail.url('preview', { _uid: uid, _mbox: folder, _framed: 1 });
+    iframe.removeAttribute('srcdoc');
+    iframe.src = url;
   }
 
   window.avuzOpen = {
