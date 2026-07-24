@@ -128,6 +128,15 @@ STOP and report**: which checklist items broke, on which message, with which met
 the console errors. Do not proceed to Task 2+ — the approach needs rethinking (e.g.
 caching a body fragment + a fixed shell, or accepting a server round-trip for state).
 
+**SPIKE OUTCOME (2026-07-24): `srcdoc` WINS.** On staging: body rendered (bodyLen ~5.7k),
+`preview_id`/`uid` set correctly, **no CSP `script-src` error** (only an ad-blocker beacon
+block, unrelated). Toolbar reply/forward/print stayed disabled after paint — resolved by
+`rcmail.enable_command(...)` in `paintFromCache`'s caller (see Task 8); after that,
+`command('reply')` opened compose with the message correctly quoted. **Residual checks
+deferred to Task 11 staging acceptance** (low risk): inline CID image display, attachment
+row + download, remote-image behavior under `_safe` (a cross-origin image was blocked in
+the spike — confirm it matches a normal open's proxied/blocked behavior), and next/prev.
+
 ---
 
 ## Task 1: `_preload` mark-seen gate in show.php
@@ -785,6 +794,13 @@ injection the spike found necessary):
         rcmail.env.uid = uid;
         rcmail.show_contentframe(true);
         paintFromCache(iframe, rec.html);
+        // SPIKE FINDING (Task 0): srcdoc renders the body but the framed page's scripts
+        // do NOT re-enable the message toolbar in the srcdoc frame — so we enable the
+        // message-context commands ourselves (verified: reply then opens compose with the
+        // correct quoted body once env.uid is set). Match the set a normal open enables.
+        rcmail.enable_command('reply', 'reply-all', 'reply-list', 'forward',
+          'forward-attachment', 'forward-inline', 'print', 'delete', 'move', 'copy',
+          'mark', 'viewsource', 'download', 'edit', 'open', 'more', true);
         // The fast path skipped the render that marks read: mark it now (real open).
         rcmail.set_unread_message(uid, folder);       // client unread counters
         rcmail.http_post('mark', { _uid: uid, _mbox: folder, _flag: 'SEEN' }); // server \Seen
