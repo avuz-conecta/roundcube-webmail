@@ -63,6 +63,9 @@ COPY program/localization/pt_BR/messages.inc /var/www/roundcube/program/localiza
 # build uses the stock file and search defaults to the current folder. See
 # customizations.json.
 COPY program/actions/mail/index.php /var/www/roundcube/program/actions/mail/index.php
+# show.php: _preload flag suppresses mark-\Seen so avuz_body_cache can render a
+# message body for the browser cache without marking it read. See customizations.json.
+COPY program/actions/mail/show.php /var/www/roundcube/program/actions/mail/show.php
 # app.js + elastic ui.js: default search scope = all folders (reset points too), and
 # the source the skin/app actually run. Roundcube serves the *.min.js twin whenever it
 # exists (rcmail_output_html.php:1065), so overlaying the patched source is not enough

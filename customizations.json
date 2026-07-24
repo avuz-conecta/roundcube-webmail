@@ -245,6 +245,14 @@
       "description": "Warns once per session when the user selects whole-message (body/TEXT) search, which costs Zoho server-side compute that no client change can reduce.",
       "risk": "low",
       "notes": "Client-side only; hooks the search UI via the 'beforesearch' event, never the search itself. 69s measured for one all-folder body search on this deployment. If Roundcube renames or removes the beforesearch event the warning silently stops appearing — harmless, but re-check on upgrade."
+    },
+    {
+      "id": "show-preload-no-mark-seen",
+      "type": "core-patch",
+      "paths": ["program/actions/mail/show.php", "Dockerfile"],
+      "description": "A _preload=1 query flag on the show/preview action renders the body but suppresses marking the message \\Seen, so the avuz_body_cache background prefetch can warm the browser cache without marking mail read.",
+      "risk": "low",
+      "notes": "mail_read_time=0 makes show.php mark \\Seen immediately on render; the guard gates that single block. Re-check on rebase that the mark block still sits in show.php run() and that no other path marks \\Seen for a plain preview."
     }
   ]
 }

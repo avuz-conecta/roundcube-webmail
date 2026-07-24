@@ -122,10 +122,18 @@ class rcmail_action_mail_show extends rcmail_action_mail_index
                 'movingmessage', 'deletingmessage', 'markingmessage', 'replyall', 'replylist',
                 'bounce', 'bouncemsg', 'sendingmessage');
 
-            // check for unset disposition notification
-            self::mdn_request_handler($MESSAGE);
+            // AVUZ: a background prefetch (avuz_body_cache) fetches this render with
+            // _preload=1 only to warm the browser body cache — it is NOT a user open,
+            // so it must not send an MDN read-receipt, mark the message \Seen, or arm
+            // the client read-timer.
+            $avuz_preload = rcube_utils::get_input_string('_preload', rcube_utils::INPUT_GET) === '1';
 
-            if (empty($MESSAGE->headers->flags['SEEN']) && $MESSAGE->context === null) {
+            if (!$avuz_preload) {
+                // check for unset disposition notification
+                self::mdn_request_handler($MESSAGE);
+            }
+
+            if (!$avuz_preload && empty($MESSAGE->headers->flags['SEEN']) && $MESSAGE->context === null) {
                 $v = intval($rcmail->config->get('mail_read_time'));
                 if ($v > 0) {
                     $rcmail->output->set_env('mail_read_time', $v);
