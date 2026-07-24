@@ -41,6 +41,15 @@
     return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.text() : null; });
   }
 
+  // Do NOT cache a body that has blocked remote images (show.php sets
+  // env.blockedobjects). Those carry Roundcube's "load remote images" bar whose
+  // Permitir/Sempre-permitir actions do a real in-frame _safe=1 reload — which a
+  // cached srcdoc render cannot represent (stale bar, re-render loops). Let those
+  // messages open normally (cache miss -> baseShow); regular mail still caches.
+  function cacheable(html) {
+    return html && !/"blockedobjects"\s*:\s*(?:true|1)\b/.test(html);
+  }
+
   function run() {
     if (!rcmail.env.avuz_body_cache) return;
     var myToken = ++token;
@@ -58,7 +67,7 @@
           avuzIdb.has(key).then(function (hit) {
             if (hit || myToken !== token) return null;
             return fetchBody(row).then(function (html) {
-              if (html && myToken === token) return avuzIdb.put(key, html);
+              if (cacheable(html) && myToken === token) return avuzIdb.put(key, html);
             });
           }).then(function () {
             active--;
