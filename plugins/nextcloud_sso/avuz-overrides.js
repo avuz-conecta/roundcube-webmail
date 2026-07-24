@@ -66,4 +66,30 @@
       win.location.href = win.location.pathname + '?_task=mail&_mbox=INBOX';
     }
   });
+
+  /* Avuz: suppress the periodic auto-refresh while a search is active.
+   *
+   * Roundcube's refresh timer (refresh_interval) calls refresh() -> check-recent.
+   * When a search result is displayed, check_recent_params() passes _search + _list
+   * (app.js), so the backend RE-RUNS THE ENTIRE cross-folder search on Zoho every
+   * tick. On a high-latency Zoho link that is slow and it disrupts the list the user
+   * is reading (selection/scroll). Skip the tick while a search is active; normal
+   * new-mail checking resumes automatically as soon as the search is cleared
+   * (env.search_request is unset then, so the guard falls through).
+   *
+   * ref.refresh() is looked up on the instance at call time, so replacing the
+   * method here is honoured by the interval set in start_refresh().
+   */
+  rcmail.addEventListener('init', function () {
+    if (typeof rcmail.refresh !== 'function') {
+      return;
+    }
+    var baseRefresh = rcmail.refresh;
+    rcmail.refresh = function () {
+      if (rcmail.env.search_request) {
+        return;
+      }
+      return baseRefresh.apply(rcmail, arguments);
+    };
+  });
 })();

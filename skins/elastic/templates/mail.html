@@ -51,24 +51,13 @@
 		<div class="formcontent">
 			<ul class="proplist">
 				<li><label><input type="checkbox" name="s_mods[]" value="subject" /><roundcube:label name="subject" /></label></li>
-				<li class="with-sublist">
-					<label><input type="checkbox" name="s_mods[]" value="sender" /><roundcube:label name="sender" /></label>
-					<a class="button icon dropdown" role="button" href="#" title="<roundcube:label name="details" />"></a>
-					<ul class="proplist d-none">
-						<li><label><input type="checkbox" name="s_mods[]" value="from" /><roundcube:label name="from" /></label></li>
-						<li><label><input type="checkbox" name="s_mods[]" value="replyto" /><roundcube:label name="replyto" /></label></li>
-						<li><label><input type="checkbox" name="s_mods[]" value="followupto" /><roundcube:label name="followupto" /></label></li>
-					</ul>
-				</li>
-				<li class="with-sublist">
-					<label><input type="checkbox" name="s_mods[]" value="recipient" /><roundcube:label name="recipient" /></label>
-					<a class="button icon dropdown" role="button" href="#" title="<roundcube:label name="details" />"></a>
-					<ul class="proplist d-none">
-						<li><label><input type="checkbox" name="s_mods[]" value="to" /><roundcube:label name="to" /></label></li>
-						<li><label><input type="checkbox" name="s_mods[]" value="cc" /><roundcube:label name="cc" /></label></li>
-						<li><label><input type="checkbox" name="s_mods[]" value="bcc" /><roundcube:label name="bcc" /></label></li>
-					</ul>
-				</li>
+				<!-- AVUZ: flattened to single one-line toggles. The old nested
+				     sublists exposed reply-to/followup-to (which Zoho cannot search —
+				     they zeroed the whole OR) and cc/bcc. "Remetente" now searches FROM,
+				     "Destinatário" searches TO. The bare 'sender'/'recipient' values were
+				     no-ops anyway (search_input() only honours subject/from/to/cc/bcc). -->
+				<li><label><input type="checkbox" name="s_mods[]" value="from" /><roundcube:label name="sender" /></label></li>
+				<li><label><input type="checkbox" name="s_mods[]" value="to" /><roundcube:label name="recipient" /></label></li>
 				<li><label><input type="checkbox" name="s_mods[]" value="body" /><roundcube:label name="body" /></label></li>
 				<li><label><input type="checkbox" name="s_mods[]" value="text" /><roundcube:label name="msgtext" /></label></li>
 			</ul>
@@ -189,6 +178,18 @@
 			</select>
 		</div>
 	</div>
+	<roundcube:else />
+	<!-- AVUZ: sort is locked to arrival (see config.inc.php dont_override) so cross-
+	     folder search always takes the pipelined path. Show it read-only rather than
+	     hiding it, so the dialog is not empty and the user sees the active sort. -->
+	<div class="form-group row">
+		<label class="col-form-label col-sm-4"><roundcube:label name="listsorting" /></label>
+		<div class="col-sm-8">
+			<select class="custom-select" disabled="disabled">
+				<option value="arrival" selected="selected"><roundcube:label name="arrival" /></option>
+			</select>
+		</div>
+	</div>
 	<roundcube:endif />
 	<roundcube:if condition="!in_array('message_sort_order', (array)config:dont_override)" />
 	<div class="form-group row">
@@ -197,6 +198,16 @@
 			<select id="listoptions-sortord" name="sort_ord">
 				<option value="ASC"><roundcube:label name="asc" /></option>
 				<option value="DESC"><roundcube:label name="desc" /></option>
+			</select>
+		</div>
+	</div>
+	<roundcube:else />
+	<!-- AVUZ: order locked to DESC (newest received first) alongside the arrival sort. -->
+	<div class="form-group row">
+		<label class="col-form-label col-sm-4"><roundcube:label name="listorder" /></label>
+		<div class="col-sm-8">
+			<select class="custom-select" disabled="disabled">
+				<option value="DESC" selected="selected"><roundcube:label name="desc" /></option>
 			</select>
 		</div>
 	</div>

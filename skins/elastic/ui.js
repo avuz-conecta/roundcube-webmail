@@ -2821,7 +2821,7 @@ function rcube_elastic_ui()
             interval_select = $('#s_interval', obj),
             mbox = rcmail.env.mailbox,
             mods = rcmail.env.search_mods,
-            scope = rcmail.env.search_scope || 'base';
+            scope = rcmail.env.search_scope || 'all'; // AVUZ: default search scope = all folders
 
         if (!$(obj).data('initialized')) {
             $(obj).data('initialized', true);

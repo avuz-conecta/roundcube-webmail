@@ -169,7 +169,21 @@ $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
 
 // -- Skin --
 $config['skin'] = 'avuz';
-$config['dont_override'] = ['skin'];
+
+// -- Sort: received-date only (AVUZ) --
+// Force arrival (INTERNALDATE / "Data de recebimento"), newest-first, everywhere.
+// Why: cross-folder search must ALWAYS take the pipelined path. run_pipelined()
+// declines a header sort (date/subject/from/size) and falls back to the slow
+// serial-per-folder search that then streams via progressive; 'arrival' is the
+// one sort it never declines, and it still yields a globally chronological result
+// (rcube_imap.php:1091 sorted branch -> sortHeaders by INTERNALDATE). Locking it
+// via dont_override also hides the sort dropdown (skins/elastic/templates/mail.html:179)
+// and disables column-header sorting (program/actions/mail/index.php:622), so users
+// cannot pick a sort that would force search back onto the serial path. The other
+// sort columns are near-useless for search results anyway.
+$config['message_sort_col']   = 'arrival';
+$config['message_sort_order'] = 'DESC';
+$config['dont_override'] = ['skin', 'message_sort_col', 'message_sort_order'];
 // Paths are skin-relative: Roundcube's file_callback resolves a leading-slash
 // href against the skin tree (skins/avuz first), so '/images/x' → skins/avuz/images/x.
 // A site-absolute '/skins/avuz/...' would be re-prefixed with the skin path (404).

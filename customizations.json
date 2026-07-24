@@ -158,7 +158,55 @@
       ],
       "description": "Pipelined multi-folder search: writes every SELECT+SEARCH pair to the one IMAP connection before reading any reply, collapsing N x 2 round trips into roughly one. Includes desync detection and a fallback to the existing serial path.",
       "risk": "high",
-      "notes": "Zoho advertises no SORT, THREAD, MULTISEARCH or QRESYNC, so all-folder search costs N x 2 RTT serially; measured 55.2s -> 6.4s for a 107-folder account. BOTH files need their Dockerfile COPY or the patch is inert and search silently reverts to serial — that was caught only because a staging smoke test grepped the running image. Depends on rcube_imap_generic::execute() keeping its write-then-read structure and on putLineC's LITERAL- non-synchronizing path; re-verify both after any rebase. Any tag arriving out of order must close the connection and fall back."
+      "notes": "Zoho advertises no SORT, THREAD, MULTISEARCH or QRESYNC, so all-folder search costs N x 2 RTT serially; measured 55.2s -> 6.4s for a 107-folder account. BOTH files need their Dockerfile COPY or the patch is inert and search silently reverts to serial — that was caught only because a staging smoke test grepped the running image. Depends on rcube_imap_generic::execute() keeping its write-then-read structure and on putLineC's LITERAL- non-synchronizing path; re-verify both after any rebase. Any tag arriving out of order must close the connection and fall back. UPDATE 2026-07-24: enabled on staging via AVUZ_PIPELINED_SEARCH=1 (stack env); accent desync fixed (see search-accent-literal); arrival sort forced so it always engages (see search-arrival-and-scope)."
+    },
+    {
+      "id": "search-accent-literal",
+      "type": "core-patch",
+      "paths": [
+        "program/actions/mail/search.php",
+        "Dockerfile"
+      ],
+      "description": "Fixes accented (non-ASCII) search terms desyncing the pipelined multi-folder search. The action's CR/LF injection guard, preg_replace('/[\\r\\n]+/',' ',$search_str), ran AFTER the term was encoded as a length-counted IMAP literal ({N}\\r\\n<bytes>), flattening the literal's mandatory \\r\\n into '{N} ' so putLineC no longer recognised it. Moved the strip to the raw $filter input (the only unescaped value in the command).",
+      "risk": "medium",
+      "notes": "Root-caused on staging with wire instrumentation: literal reached Zoho as '{8} reuniao' instead of '{8}\\r\\nreuniao', Zoho answered '+ Ready', the pipeline read it as a reply and every tag after shifted by one -> pool poison. Serial search survived only because its synchronous read absorbed the continuation. The '+' rewrite to non-sync {N+} works fine once the literal is intact (prefs['literal-'] was already set). Do NOT reintroduce a whole-command CR/LF flatten. Verify $filter stays the sole raw input on rebase (term is escaped, interval is a DateInterval, headers are whitelisted)."
+    },
+    {
+      "id": "search-zoho-fields",
+      "type": "core-patch",
+      "paths": [
+        "program/actions/mail/search.php",
+        "skins/elastic/templates/mail.html",
+        "Dockerfile"
+      ],
+      "description": "Drops the REPLY-TO/MAIL-REPLY-TO/FOLLOWUP-TO/MAIL-FOLLOWUP-TO header searches and simplifies the search-field toggles to single one-line options (Assunto, Remetente=FROM, Destinatario=TO, Conteudo=BODY, Mensagem inteira=TEXT).",
+      "risk": "low",
+      "notes": "Zoho does not index those four headers and returns an EMPTY result for the whole OR expression they appear in, silently zeroing an otherwise-valid subject/from search (confirmed by A/B test: subject+from returns hundreds, adding reply-to/followup-to returns nothing). search_input() now treats the replyto/followupto cases as no-ops; the template removes their toggles and the nested sublists. The bare 'sender'/'recipient' s_mods values were already no-ops (search_input only honours subject/from/to/cc/bcc)."
+    },
+    {
+      "id": "search-arrival-and-scope",
+      "type": "core-patch",
+      "paths": [
+        "config/config.inc.php",
+        "skins/elastic/templates/mail.html",
+        "program/actions/mail/index.php",
+        "program/js/app.js",
+        "skins/elastic/ui.js",
+        "Dockerfile"
+      ],
+      "description": "Locks list sort to arrival/DESC (received date) via message_sort_col + dont_override, rendering the sort/order controls as read-only informative fields instead of hiding the whole options dialog. Defaults the search scope to all-folders (server-side in index.php, plus the client reset points in app.js/ui.js).",
+      "risk": "medium",
+      "notes": "Arrival is the ONLY sort run_pipelined() does not decline, so forcing it keeps every cross-folder search on the fast pipelined path while still yielding a globally chronological result (rcube_imap.php:1091 sorted branch). Header sorts (date/subject/from/size) would decline to serial. dont_override also disables column-header sorting. Scope default is server-authoritative: index.php sets env.search_scope='all' unless an explicit _scope or an active search's saved scope wins. CRITICAL BUILD NOTE: app.js and ui.js are only served if the Dockerfile also rm's program/js/app.min.js and skins/elastic/ui.min.js (Roundcube serves the .min twin when present); see dockerfile COPY list."
+    },
+    {
+      "id": "search-refresh-gate",
+      "type": "plugin",
+      "paths": [
+        "plugins/nextcloud_sso/avuz-overrides.js"
+      ],
+      "description": "Suppresses Roundcube's periodic auto-refresh while a search result is displayed. Overrides rcmail.refresh to no-op when env.search_request is set.",
+      "risk": "low",
+      "notes": "check_recent_params() passes _search+_list when a search is active, so every refresh_interval tick re-ran the ENTIRE cross-folder search on Zoho and disrupted the list the user was reading. ref.refresh() is resolved on the instance at call time, so replacing the method is honoured by the interval in start_refresh(). Normal new-mail checking resumes when the search is cleared."
     },
     {
       "id": "remove-sentdate-sort",

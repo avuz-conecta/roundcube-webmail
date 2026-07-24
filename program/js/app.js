@@ -2737,7 +2737,7 @@ function rcube_webmail()
     if (this.env.mailbox != mbox) {
       page = 1;
       this.env.current_page = page;
-      this.env.search_scope = 'base';
+      this.env.search_scope = 'all'; // AVUZ: default search scope = all folders
       this.select_all_mode = false;
       this.reset_search_filter();
     }
@@ -5618,7 +5618,7 @@ function rcube_webmail()
       this.abort_request(this.env.qsearch);
 
     if (all) {
-      this.env.search_scope = 'base';
+      this.env.search_scope = 'all'; // AVUZ: default search scope = all folders
       this.reset_search_filter();
     }
 

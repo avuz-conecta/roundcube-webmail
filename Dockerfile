@@ -59,6 +59,19 @@ COPY program/lib/Roundcube/rcube_imap.php /var/www/roundcube/program/lib/Roundcu
 # message key.
 COPY program/localization/en_US/messages.inc /var/www/roundcube/program/localization/en_US/messages.inc
 COPY program/localization/pt_BR/messages.inc /var/www/roundcube/program/localization/pt_BR/messages.inc
+# index.php: default the search scope to all-folders (AVUZ). Without this COPY the
+# build uses the stock file and search defaults to the current folder. See
+# customizations.json.
+COPY program/actions/mail/index.php /var/www/roundcube/program/actions/mail/index.php
+# app.js + elastic ui.js: default search scope = all folders (reset points too), and
+# the source the skin/app actually run. Roundcube serves the *.min.js twin whenever it
+# exists (rcmail_output_html.php:1065), so overlaying the patched source is not enough
+# on its own — we also drop the stale minified twins so it falls back to our source
+# (get_skin_file/include_script serve the non-min file when no .min is present).
+# Unminified is acceptable here; gzip covers the size. See customizations.json.
+COPY program/js/app.js /var/www/roundcube/program/js/app.js
+COPY skins/elastic/ui.js /var/www/roundcube/skins/elastic/ui.js
+RUN rm -f /var/www/roundcube/program/js/app.min.js /var/www/roundcube/skins/elastic/ui.min.js
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/roundcube \

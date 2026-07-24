@@ -101,10 +101,20 @@ class rcmail_action_mail_index extends rcmail_action
 
                 $scope = rcube_utils::get_input_string('_scope', rcube_utils::INPUT_GET);
                 if (!$scope && isset($_SESSION['search_scope']) && $rcmail->output->get_env('search_request')) {
+                    // During an active search, honour the scope the user chose for it
+                    // (including 'base'), so this default does not override it.
                     $scope = $_SESSION['search_scope'];
                 }
 
-                if ($scope && preg_match('/^(all|sub)$/i', $scope)) {
+                // AVUZ: default the search scope to all-folders. Zoho users almost
+                // always want a mailbox-wide search, and it keeps searches on the fast
+                // pipelined path. Only applies when nothing else selected a scope; an
+                // explicit _scope or an active search's saved scope still win above.
+                if (!$scope) {
+                    $scope = 'all';
+                }
+
+                if ($scope && preg_match('/^(all|sub|base)$/i', $scope)) {
                     $rcmail->output->set_env('search_scope', strtolower($scope));
                 }
 
