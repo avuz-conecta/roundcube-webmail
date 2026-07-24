@@ -76,4 +76,27 @@ class avuz_prefetch_cache
         }
         $cache->set(self::done_key($folder, $uid), $mimeIds);
     }
+
+    /**
+     * Parse a client uid list into an ordered [uid,folder] map.
+     * Accepts "12,15" (default folder) or "12:INBOX,15:Sent" (folder-qualified).
+     */
+    public static function parse_uid_folder_map($uids, $default_folder)
+    {
+        $out = [];
+        foreach (array_filter(explode(',', (string) $uids), 'strlen') as $token) {
+            $pos    = strpos($token, ':');
+            $rawUid = $pos === false ? $token : substr($token, 0, $pos);
+            $folder = $pos === false ? (string) $default_folder : substr($token, $pos + 1);
+            $uid    = (int) $rawUid;
+            if ($uid <= 0 || $folder === '') {
+                continue;
+            }
+            $out[] = ['uid' => $uid, 'folder' => $folder];
+            if (count($out) >= 10) { // avuz_prefetch::MAX_UIDS
+                break;
+            }
+        }
+        return $out;
+    }
 }

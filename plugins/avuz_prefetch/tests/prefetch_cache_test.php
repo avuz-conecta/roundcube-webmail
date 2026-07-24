@@ -97,4 +97,28 @@ class prefetch_cache_test extends TestCase
         avuz_prefetch_cache::mark_warm(false, 'INBOX', 941, ['1.1']);
         $this->assertTrue(true);
     }
+
+    public function test_parse_plain_uids_uses_default_folder()
+    {
+        $out = avuz_prefetch_cache::parse_uid_folder_map('12,15,20', 'INBOX');
+        $this->assertSame(
+            [['uid'=>12,'folder'=>'INBOX'],['uid'=>15,'folder'=>'INBOX'],['uid'=>20,'folder'=>'INBOX']],
+            $out
+        );
+    }
+
+    public function test_parse_folder_qualified_tokens()
+    {
+        $out = avuz_prefetch_cache::parse_uid_folder_map('12:INBOX,15:Sent', null);
+        $this->assertSame(
+            [['uid'=>12,'folder'=>'INBOX'],['uid'=>15,'folder'=>'Sent']],
+            $out
+        );
+    }
+
+    public function test_parse_skips_invalid_and_empty_folder()
+    {
+        $out = avuz_prefetch_cache::parse_uid_folder_map('0:INBOX,abc,15:,20:Sent', 'INBOX');
+        $this->assertSame([['uid'=>20,'folder'=>'Sent']], $out);
+    }
 }
