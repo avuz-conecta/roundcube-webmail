@@ -37,6 +37,16 @@ class avuz_body_cache extends rcube_plugin
         // env var, so surface it explicitly.
         $rcmail->output->set_env('avuz_show_images', (int) (bool) $rcmail->config->get('show_images'));
 
+        $map  = [];
+        $mbox = $rcmail->output->get_env('mailbox') ?: $rcmail->storage->get_folder();
+        if ($mbox) {
+            $data = $rcmail->storage->folder_data($mbox);
+            if (!empty($data['UIDVALIDITY'])) {
+                $map[$mbox] = (string) $data['UIDVALIDITY'];
+            }
+        }
+        $rcmail->output->set_env('avuz_uidvalidity', $map);
+
         return $args;
     }
 }

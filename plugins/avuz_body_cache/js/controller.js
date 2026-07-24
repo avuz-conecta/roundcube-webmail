@@ -15,7 +15,8 @@
     return out; // rendered page already ~= visible + one page of lookahead in Elastic
   }
 
-  function keyFor(folder, uid) { return userTag() + '|' + folder + '|' + uid + '|' + sanitizerV(); }
+  function uidv(folder) { var m = rcmail.env.avuz_uidvalidity || {}; return m[folder] || '0'; }
+  function keyFor(folder, uid) { return userTag() + '|' + folder + '|' + uidv(folder) + '|' + uid + '|' + sanitizerV(); }
 
   function warmRedis(rows) {
     // Group into folder-qualified uid tokens, <=10 per POST (server caps at MAX_UIDS).
