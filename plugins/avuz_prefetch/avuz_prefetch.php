@@ -89,15 +89,13 @@ class avuz_prefetch extends rcube_plugin
         $mbox   = (string) rcube_utils::get_input_value('_mbox', rcube_utils::INPUT_POST);
         $mbox   = $mbox !== '' ? $mbox : null;
 
-        $cache = $this->cache();
-        $list  = array_slice(array_filter(explode(',', $uids), 'strlen'), 0, self::MAX_UIDS);
-        $folder = $mbox !== null ? $mbox : $rcmail->storage->get_folder();
+        $cache        = $this->cache();
+        $defaultMbox  = $mbox !== null ? $mbox : $rcmail->storage->get_folder();
+        $list         = avuz_prefetch_cache::parse_uid_folder_map($uids, $defaultMbox);
 
-        foreach ($list as $rawUid) {
-            $uid = (int) $rawUid;
-            if ($uid <= 0) {
-                continue;
-            }
+        foreach ($list as $entry) {
+            $uid    = $entry['uid'];
+            $folder = $entry['folder'];
 
             // Already warmed on an earlier run: skip before building rcube_message,
             // which would cost a BODYSTRUCTURE fetch plus per-level MIME header fetches.
@@ -106,7 +104,7 @@ class avuz_prefetch extends rcube_plugin
             }
 
             try {
-                $message = new rcube_message($uid, $mbox);
+                $message = new rcube_message($uid, $folder);
                 if (empty($message->headers)) {
                     continue;
                 }
