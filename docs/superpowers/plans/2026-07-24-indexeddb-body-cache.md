@@ -43,6 +43,93 @@ Plugin JS is split into idb / controller / open / entry so each file has one res
 
 ---
 
+## Task 0: Spike — validate the instant-paint mechanism (BLOCKING)
+
+**Goal:** Prove — on staging, by hand — that a cached preview HTML can be painted into
+the message content iframe as a *faithful* open (body + images render, no CSP breakage,
+toolbar/reply/next-prev state correct, email-body scripts stay inert) before building
+anything on top. Roundcube serves message content under a strict CSP
+(`rcmail_action.php:695` `script-src 'none'`, `rcube_output.php:290` `default-src 'none'; img-src 'self'`),
+and `srcdoc` does NOT inherit a response's CSP — so this must be verified, not assumed.
+
+**Files:** none (throwaway console testing). **Produces:** the winning paint method, to be
+dropped into Task 8's `paintFromCache(iframe, html)`.
+
+- [ ] **Step 1: Depends on Task 1** — the `_preload` flag must exist first (so the cached
+  HTML is a real, unmarked render). Do Task 1, deploy, then run this spike.
+
+- [ ] **Step 2: Pick 3 representative messages + establish the baseline**
+
+Choose three unread messages that between them exercise the render paths (fidelity bugs
+hide in these): **M-html** — an HTML message with an inline (CID) image AND a file
+attachment; **M-plain** — a plain-text message; **M-remote** — an HTML message with a
+remote image (so the `_safe`/show-images behavior is exercised). For each, note uid+folder.
+
+For **each** message, do a **normal open** first (click it) and record the reference:
+```js
+// after clicking the message normally:
+(function(){ var f=document.getElementById(rcmail.env.contentframe);
+  console.log('BASE uid', rcmail.env.uid, 'preview_id', rcmail.preview_id);
+  console.log('BASE reply enabled', rcmail.commands.reply, 'forward', rcmail.commands.forward);
+  console.log('BASE frame body len', f.contentDocument.body.innerHTML.length);
+})();
+```
+Screenshot the rendered view (headers, body, attachment row, inline image). This is the
+**baseline** each method must reproduce.
+
+- [ ] **Step 3: The fidelity checklist (used by Steps 4–6)**
+
+A method **passes** for a message only if ALL hold, compared to that message's baseline:
+1. **Body** renders — same text/layout as baseline (M-plain: plain rendering; M-html: HTML).
+2. **Inline CID image** (M-html) loads — no broken-image icon, no `img-src` CSP error.
+3. **Remote image** (M-remote) behaves like a real open at the same `_safe` (shown if
+   `avuz_show_images`, else blocked with the "show images" bar).
+4. **Attachment row** (M-html) is present and its download link works.
+5. **Headers/summary** (from/to/subject/date) render as baseline.
+6. **Toolbar**: reply, forward, delete, print enabled; **reply actually opens compose with
+   the correct quoted body and subject** (not just "enabled" — exercise it).
+7. **next/prev** message navigation works after the cache-paint open.
+8. **`rcmail.env.uid` and `rcmail.preview_id`** equal the opened uid afterward (confirms
+   state is consistent — whether set by the framed page's scripts or our manual setup).
+9. **Console**: no CSP violation errors; no uncaught JS errors.
+10. **No email-body script executes** (washtml strips them; confirm nothing runs).
+11. **Layout/scroll** of the preview pane is correct (no zero-height, no overflow break).
+
+- [ ] **Step 4: Capture each message's `_preload` HTML, then try Method 1 — `srcdoc`**
+
+```js
+function cap(U,F){ return fetch(rcmail.url('preview',{_uid:U,_mbox:F,_framed:1,_preload:1,_safe:rcmail.env.avuz_show_images?1:0}),{credentials:'same-origin'}).then(r=>r.text()); }
+function paintSrcdoc(U,html){ var f=document.getElementById(rcmail.env.contentframe); rcmail.preview_id=U; rcmail.env.uid=U; rcmail.show_contentframe(true); f.removeAttribute('src'); f.srcdoc=html; }
+// for each message: cap(U,F).then(h=>paintSrcdoc(U,h)); then run the Step 3 checklist.
+```
+Record pass/fail **per message, per checklist item**.
+
+- [ ] **Step 5: Try Method 2 — blob URL (only for messages Method 1 failed)**
+
+```js
+function paintBlob(U,html){ var f=document.getElementById(rcmail.env.contentframe); rcmail.preview_id=U; rcmail.env.uid=U; rcmail.show_contentframe(true); f.removeAttribute('srcdoc'); f.src=URL.createObjectURL(new Blob([html],{type:'text/html'})); }
+```
+Run the Step 3 checklist. (Note: a `<base href="/">` injected into `html` before painting
+may be required for relative asset URLs — try with and without.)
+
+- [ ] **Step 6: Try Method 3 — `contentDocument.write` (only if 1 and 2 failed)**
+
+```js
+function paintWrite(U,html){ var f=document.getElementById(rcmail.env.contentframe); rcmail.preview_id=U; rcmail.env.uid=U; rcmail.show_contentframe(true); f.removeAttribute('src'); var d=f.contentDocument; d.open(); d.write(html); d.close(); }
+```
+Run the Step 3 checklist.
+
+- [ ] **Step 7: Record the outcome**
+
+A method is the winner only if it passes the **full Step 3 checklist for all three
+messages**. Record it (plus any required `<base href>` injection) as `paintFromCache`'s
+body in a comment at the top of Task 8. **If no single method passes all three messages,
+STOP and report**: which checklist items broke, on which message, with which method, and
+the console errors. Do not proceed to Task 2+ — the approach needs rethinking (e.g.
+caching a body fragment + a fixed shell, or accepting a server round-trip for state).
+
+---
+
 ## Task 1: `_preload` mark-seen gate in show.php
 
 **Files:**
@@ -53,21 +140,34 @@ Plugin JS is split into idb / controller / open / entry so each file has one res
 **Interfaces:**
 - Produces: preview/show renders with `?_preload=1` do not mark the message `\Seen` and do not arm the client read-timer. All other behavior identical.
 
-- [ ] **Step 1: Add the `_preload` guard**
+- [ ] **Step 1: Add the `_preload` guard (MDN + mark-seen)**
 
-In `program/actions/mail/show.php`, change the mark-seen condition (currently):
+In `program/actions/mail/show.php`, the current block is:
 
 ```php
+            // check for unset disposition notification
+            self::mdn_request_handler($MESSAGE);
+
             if (empty($MESSAGE->headers->flags['SEEN']) && $MESSAGE->context === null) {
 ```
 
-to:
+Replace it with (gate BOTH the disposition-notification handler and the mark-seen block —
+a background prefetch is not a user open, so it must neither mark `\Seen`/arm the read
+timer NOR trigger a read-receipt/MDN. `mdn_requests=0` here means MDN won't auto-send
+today, but gating it is correct and future-proof):
 
 ```php
             // AVUZ: a background prefetch (avuz_body_cache) fetches this render with
             // _preload=1 only to warm the browser body cache — it is NOT a user open,
-            // so it must not mark the message \Seen nor arm the client read-timer.
+            // so it must not send an MDN read-receipt, mark the message \Seen, or arm
+            // the client read-timer.
             $avuz_preload = rcube_utils::get_input_string('_preload', rcube_utils::INPUT_GET) === '1';
+
+            if (!$avuz_preload) {
+                // check for unset disposition notification
+                self::mdn_request_handler($MESSAGE);
+            }
+
             if (!$avuz_preload && empty($MESSAGE->headers->flags['SEEN']) && $MESSAGE->context === null) {
 ```
 
@@ -420,6 +520,10 @@ class avuz_body_cache extends rcube_plugin
         $rcmail->output->set_env('avuz_body_cache', true);
         $rcmail->output->set_env('avuz_cache_user', avuz_body_cache_lib::user_tag($user, $deskey));
         $rcmail->output->set_env('avuz_sanitizer_version', avuz_body_cache_lib::SANITIZER_VERSION);
+        // The effective remote-image safety the prefetch should render with, so the
+        // cached _safe matches what a real open shows. show_images is a config, not an
+        // env var, so surface it explicitly.
+        $rcmail->output->set_env('avuz_show_images', (int) (bool) $rcmail->config->get('show_images'));
 
         return $args;
     }
@@ -591,7 +695,7 @@ Create `plugins/avuz_body_cache/js/controller.js`:
   }
 
   function fetchBody(row) {
-    var url = rcmail.url('preview', { _uid: row.uid, _mbox: row.folder, _framed: 1, _preload: 1, _safe: rcmail.env.show_images ? 1 : 0 });
+    var url = rcmail.url('preview', { _uid: row.uid, _mbox: row.folder, _framed: 1, _preload: 1, _safe: rcmail.env.avuz_show_images ? 1 : 0 });
     return fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.text() : null; });
   }
 
@@ -654,31 +758,36 @@ git commit -m "feat(body_cache): prefetch controller (window, warm, fetch, throt
 
 - [ ] **Step 1: Implement open.js**
 
-Create `plugins/avuz_body_cache/js/open.js`:
+Create `plugins/avuz_body_cache/js/open.js`. **`paintFromCache`'s body is whatever
+Task 0's spike proved works** — the block below shows the `srcdoc` variant; if the spike
+selected blob-URL or `contentDocument.write`, substitute that method (and any `<base href>`
+injection the spike found necessary):
 
 ```js
 /* avuz_body_cache: instant open from cache. Miss -> caller falls back to normal open. */
 (function () {
-  function contentFrameWin() {
-    var name = rcmail.env.contentframe, el = name && document.getElementById(name);
-    return el ? el.contentWindow : null;
+  // Paint method proven by the Task 0 spike. (srcdoc variant shown.)
+  function paintFromCache(iframe, html) {
+    iframe.removeAttribute('src');
+    iframe.srcdoc = html;
   }
 
   window.avuzOpen = {
     tryHit: function (uid, folder) {
       if (!rcmail.env.avuz_body_cache) return Promise.resolve(false);
+      var iframe = rcmail.env.contentframe && document.getElementById(rcmail.env.contentframe);
+      if (!iframe) return Promise.resolve(false);    // no preview frame -> normal open
       var key = avuzPrefetch.keyFor(folder, String(uid));
       return avuzIdb.get(key).then(function (rec) {
         if (!rec) return false;
-        var win = contentFrameWin();
-        if (!win) return false;                      // no preview frame -> let normal open run
-        // Paint instantly from cache.
-        var iframe = document.getElementById(rcmail.env.contentframe);
-        iframe.removeAttribute('src');
-        iframe.srcdoc = rec.html;
+        // Preserve the state setup show_message would do before painting.
+        rcmail.preview_id = uid;
+        rcmail.env.uid = uid;
+        rcmail.show_contentframe(true);
+        paintFromCache(iframe, rec.html);
         // The fast path skipped the render that marks read: mark it now (real open).
-        rcmail.set_unread_message(uid, folder);
-        rcmail.http_post('mark', { _uid: uid, _mbox: folder, _flag: 'read' });
+        rcmail.set_unread_message(uid, folder);       // client unread counters
+        rcmail.http_post('mark', { _uid: uid, _mbox: folder, _flag: 'SEEN' }); // server \Seen
         return true;
       }).catch(function () { return false; });
     }
@@ -731,13 +840,15 @@ Create `plugins/avuz_body_cache/js/bodycache.js`:
       schedule();
     });
 
-    // Try cache before a normal open. Intercept the row-select command path.
+    // Try cache before a normal open — only for the preview-pane path.
     var baseShow = rcmail.show_message;
     rcmail.show_message = function (id, safe, preview) {
-      if (preview && id) {
-        var folder = (rcmail.message_list && rcmail.message_list.rows[rcmail.message_list.get_row_uid ? id : id])
-          ? (rcmail.message_list.rows[id].folder || rcmail.env.mailbox) : rcmail.env.mailbox;
-        avuzOpen.tryHit(id, folder).then(function (hit) {
+      if (preview && id && rcmail.env.contentframe) {
+        // params_from_uid resolves {_uid, _mbox} from the row id, including the
+        // per-row folder for multifolder search — the correct Roundcube API for this.
+        var p = rcmail.params_from_uid(id, {});
+        var uid = p._uid, folder = p._mbox || rcmail.env.mailbox;
+        avuzOpen.tryHit(uid, folder).then(function (hit) {
           if (!hit) baseShow.call(rcmail, id, safe, preview);
         });
         return;
@@ -750,7 +861,10 @@ Create `plugins/avuz_body_cache/js/bodycache.js`:
 })();
 ```
 
-> Note for implementer: `id` passed to `show_message` is the list row id; `rcmail.message_list.rows[id].uid` is the real uid and `.folder` the per-row folder (multifolder search). If the row lookup proves unreliable across Elastic versions, resolve uid/folder from `rcmail.env.uid`/`rcmail.env.mailbox` after selection instead — verify on staging in Step 4.
+> Note for implementer: `rcmail.params_from_uid(id, {})` returns `{_uid, _mbox}` and is the
+> same call the stock `show_message` uses to build the open URL, so it handles the
+> multifolder-search row-id encoding correctly. Verify on staging (Task 11) that `uid`/
+> `folder` match the clicked row, especially in an all-folders search result.
 
 - [ ] **Step 2: Register the plugin**
 
@@ -897,3 +1011,11 @@ git commit -m "docs(cache): mark IndexedDB body cache implemented on staging"
 - **Spec coverage:** §12 prefetch (Tasks 7,9), §13.1 prefetch-only/no reactive capture (open.js miss → normal open; no iframe-capture code), §13.2 `_preload` (Task 1), §13.3 multifolder warm (Tasks 2,3) + per-folder fetch (Task 7), §13.4 one controller + throttle/defer (Task 7) + supersede prefetch.js client loop (note below), §13.5 mark-seen on hit (Task 8), §5 namespacing/sanitizerVersion (Tasks 4,5,10), §7 eviction (Task 6), §10 flag/rollout (Tasks 5,11).
 - **prefetch.js retirement:** the spec says the new controller supersedes `prefetch.js`'s *client* loop. To avoid double-warming while the flag is on, once Task 11 passes, either gate `prefetch.js`'s `startRun` behind `!rcmail.env.avuz_body_cache` or remove its `afterlist`/`listupdate` binding — do this as a small follow-up commit after acceptance, not before (keep folder warming working if the flag is off). Left as a deliberate post-acceptance step, not a hidden cap.
 - **Open items carried (non-blocking):** all-folders UIDVALIDITY for multifolder search (Task 10 uses `'0'` fallback), inline images re-fetch (accepted v1), bulk endpoint B (scale hatch, unbuilt), at-rest encryption (none, per §5).
+
+- **Grill fixes applied (2026-07-24):**
+  - Added **Task 0 blocking spike** — the `srcdoc` paint is unvalidated against Roundcube's strict message-content CSP (`rcmail_action.php:695`, `rcube_output.php:290`); the spike proves srcdoc / blob-URL / `contentDocument.write` against a real baseline + full fidelity checklist across HTML/plain/remote-image/attachment messages before anything is built on it. If all fail → stop and report.
+  - **Task 1** now gates BOTH `mdn_request_handler` (read-receipt) and the mark-`\Seen` block under `_preload` (defensive; `mdn_requests=0` today so no auto-send, but correct and future-proof).
+  - **Task 8** mark flag corrected `'read'` → **`'SEEN'`** (the `mark` action calls `set_flag($uids, $flag)`); paint delegated to `paintFromCache` (spike-proven); preserves `preview_id`/`env.uid`/`show_contentframe(true)` instead of bypassing `show_message`'s setup.
+  - **Task 5/7** surface `avuz_show_images` (config, not an env var) so prefetch `_safe` matches a real open.
+  - **Task 9** folder/uid resolution uses `rcmail.params_from_uid(id, {})` (the stock API, multifolder-correct) instead of ad-hoc row lookups.
+  - Verified against code: `rcmail::get_user_name()` exists (`rcube.php:1606`); `folder_data()['UIDVALIDITY']` is the source (Task 10); mark action params `_uid/_mbox/_flag`.
