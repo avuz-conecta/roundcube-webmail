@@ -43,7 +43,17 @@ $config['imap_timeout'] = 15;
 // field (verified on the wire, MYRIGHTS "<folder>" lrswikxtea). With ACL off,
 // folder_info skips MYRIGHTS and uses namespace: personal folders are renamable.
 // Safe here — we don't load the acl plugin and this tenant has no folder sharing.
-$config['imap_disabled_caps'] = ['ACL'];
+// Also disable LITERAL+ / LITERAL- so IMAP literals use the SYNCHRONIZING form
+// ({N}\r\n + '+' handshake) rather than the non-synchronizing {N+}. Zoho's
+// non-synchronizing literal in SEARCH is broken — a `HEADER SUBJECT {8+}\r\nReunião`
+// returns an EMPTY result for a subject that plainly contains the term (verified
+// on the wire). The synchronizing form is base IMAP4rev1 and Zoho matches it. On
+// the serial path the handshake consumes the continuation so it cannot desync;
+// the pipeline (searchMulti) already declines any search carrying a literal when
+// neither literal cap is set, so accented searches fall to serial — exactly where
+// the synchronizing handshake works. Costs one extra round trip per literal
+// (login password, accented search term); negligible against a broken search.
+$config['imap_disabled_caps'] = ['ACL', 'LITERAL+', 'LITERAL-'];
 
 // NOTE: skip_deleted is deliberately left at its default (false).
 // Setting it true would enable ESEARCH on index queries (compact UID ranges
