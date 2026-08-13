@@ -42,7 +42,10 @@ services:
       # password change for that domain (absent = true). Example:
       # {"client-a.com":{"clientId":"..","clientSecret":"..","refreshToken":"..","zoid":"..","forcePasswordChange":false}}
       - ZOHO_TENANTS=$ZOHO_TENANTS
-      - ZOHO_IMAP_HOST=imap.zoho.com
+      # imappro = Zoho's IMAP host for paid ORGANIZATION accounts (all Avuz tenants).
+      # The broker verifies passwords over IMAP against this host — keep it aligned
+      # with the webmail's imappro/smtppro endpoints.
+      - ZOHO_IMAP_HOST=imappro.zoho.com
       - ZOHO_IMAP_PORT=993
 
   # IMAP connection-caching proxy. Roundcube connects to imapproxy:143 (plaintext,

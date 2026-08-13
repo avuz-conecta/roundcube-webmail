@@ -18,19 +18,22 @@ if ($useProxy) {
     $config['imap_auth_type'] = 'IMAP'; // plaintext LOGIN command — imapproxy caches it (it does NOT cache SASL)
     // no imap_conn_options: hop to the sidecar is plaintext, stunnel inside it does TLS to Zoho
     $config['avuz_providers'] = [
-        'zoho'     => ['imap' => $proxyHost . ':143',              'smtp' => 'tls://smtp.zoho.com:587'],
+        'zoho'     => ['imap' => $proxyHost . ':143',              'smtp' => 'tls://smtppro.zoho.com:587'],
         'digrepal' => ['imap' => 'tls://mail.digrepal.com.br:143', 'smtp' => 'tls://mail.digrepal.com.br:587'],
     ];
     $config['password_hosts'] = [$proxyHost]; // storage_host becomes the sidecar name; only zoho users get the form
 } else {
-    $config['default_host']      = 'ssl://imap.zoho.com';
+    // imappro/smtppro = Zoho's endpoints for paid ORGANIZATION accounts on hosted
+    // custom domains (all Avuz tenants are org accounts). The consumer imap.zoho.com
+    // host tolerates them but is not the documented path and throttles org traffic.
+    $config['default_host']      = 'ssl://imappro.zoho.com';
     $config['default_port']      = 993;
     $config['imap_conn_options'] = ['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]];
     $config['avuz_providers']    = [
-        'zoho'     => ['imap' => 'ssl://imap.zoho.com:993',        'smtp' => 'tls://smtp.zoho.com:587'],
+        'zoho'     => ['imap' => 'ssl://imappro.zoho.com:993',     'smtp' => 'tls://smtppro.zoho.com:587'],
         'digrepal' => ['imap' => 'tls://mail.digrepal.com.br:143', 'smtp' => 'tls://mail.digrepal.com.br:587'],
     ];
-    $config['password_hosts']    = ['imap.zoho.com'];
+    $config['password_hosts']    = ['imappro.zoho.com'];
 }
 $config['imap_timeout'] = 15;
 
@@ -55,7 +58,7 @@ $config['imap_disabled_caps'] = ['ACL'];
 // 'ALL UNDELETED NOT UID <set>' upload on warm list requests).
 
 // -- SMTP (Zoho) --
-$config['smtp_server'] = 'tls://smtp.zoho.com';
+$config['smtp_server'] = 'tls://smtppro.zoho.com';
 $config['smtp_port'] = 587;
 $config['smtp_user'] = '%u';
 $config['smtp_pass'] = '%p';
@@ -133,7 +136,21 @@ $config['plugins'] = [
     'avuz_poll_scope',
     'avuz_search_notice',
     'avuz_body_cache',   // AVUZ: browser IndexedDB body cache (inert unless AVUZ_BODY_CACHE=1)
+    'markasjunk',        // AVUZ: Junk / Not-Junk buttons — pure IMAP folder move (Zoho has no learning API)
 ];
+
+// -- Mark as Junk / Not Junk (markasjunk plugin) --
+// Zoho exposes NO spam-learning API (same reason managesieve is gone), so we run
+// the plugin's default driver as a pure folder move: Junk -> Spam, Not-Junk ->
+// INBOX. Moving a message OUT of Spam into INBOX is the only signal Zoho's
+// classifier trains on over IMAP; a hard trusted-sender whitelist still lives
+// only in Zoho Mail settings and cannot be set from here.
+$config['markasjunk_learning_driver'] = null;   // no engine — just move
+$config['markasjunk_spam_mbox']  = 'Spam';       // Zoho's spam folder is 'Spam'
+$config['markasjunk_ham_mbox']   = 'INBOX';
+$config['markasjunk_move_spam']  = true;         // Junk button -> move to Spam
+$config['markasjunk_move_ham']   = true;         // Not-Junk button -> move to INBOX
+$config['markasjunk_read_spam']  = true;         // mark read when filing to Spam
 
 // -- New-mail polling scope --
 // Folders that can receive mail WITHOUT our filters putting it there, so they are
