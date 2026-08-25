@@ -2096,10 +2096,22 @@ class rcube_imap_generic
 
             // Untagged data starts with '*' or '+'; only a tagged line can match here.
             if (preg_match('/^(A[0-9]+) /', $line, $matches) && $matches[1] !== $tag) {
-                // Same reasoning as above: a desync is handled internally by
-                // the serial fallback, so log it instead of raising it to the UI.
-                $this->closeSocket();
-                rcube::write_log('errors', 'pipelined search desync: expected ' . $tag . ', got ' . $matches[1] . ' — falling back to serial');
+                // D1 — a desynced connection must be REALIGNED or DESTROYED before
+                // it can go back to imapproxy's pool. Closing Roundcube's side alone
+                // (the old behaviour) leaves the upstream connection cached with our
+                // unread replies still buffered on it; the next user to reuse it
+                // reads OUR leftover replies and sees BAD/wrong answers to commands
+                // they never sent — cross-user pool poisoning that only manifested
+                // under real Brazil→Zoho RTT. resyncConnection() drains to a private
+                // NOOP tag: if it realigns the stream the connection is clean again
+                // (the serial fallback may even reuse it); only if it cannot be made
+                // safe within budget do we drop the socket. Handled internally, so
+                // it is logged, never surfaced as a user-facing error.
+                rcube::write_log('errors', 'pipelined search desync: expected ' . $tag . ', got ' . $matches[1] . ' — resyncing connection');
+
+                if (!$this->resyncConnection()) {
+                    $this->closeSocket();
+                }
 
                 return false;
             }
@@ -2115,15 +2127,64 @@ class rcube_imap_generic
     }
 
     /**
+     * Realigns a connection whose reply stream has desynchronised (a tag was
+     * read that we never sent). Sends a uniquely-tagged NOOP and reads-and-
+     * discards every line until that tag's completion appears, bounded by a
+     * byte cap AND a time cap. Returns true when the stream is aligned again —
+     * the connection is then safe to reuse and returns clean to imapproxy's
+     * pool on the session's normal LOGOUT. Returns false when it could not be
+     * made safe within budget (e.g. the server is blocked waiting on a
+     * synchronising literal that will never arrive); the caller must destroy
+     * the socket in that case.
+     *
+     * This is the D1 defence. Without it, an abandoned desynced connection is
+     * cached by up-imapproxy and poisons whichever user reuses it next. The NOOP
+     * tag is freshly allocated (a strictly higher number than anything already
+     * on the wire) so it can never collide with a buffered reply being drained.
+     *
+     * @return bool True if the stream realigned, false if it must be destroyed
+     */
+    protected function resyncConnection()
+    {
+        $tag = $this->nextTag();
+
+        if ($this->putLine($tag . ' NOOP') === false) {
+            return false;
+        }
+
+        $deadline   = microtime(true) + 3.0;  // time budget
+        $byte_limit = 262144;                 // byte budget — 256 KiB
+        $read       = 0;
+
+        while (microtime(true) < $deadline && $read < $byte_limit) {
+            $line = $this->readFullLine(4096);
+
+            if ($line === '' || $line === false) {
+                return false;
+            }
+
+            $read += strlen($line);
+
+            if ($this->startsWith($line, $tag . ' ', true, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Executes SELECT + SEARCH for many folders on one connection, pipelined.
      *
      * Every command in a batch is written before any reply is read, so N
      * folders cost roughly one round trip instead of 2N. The server performs
      * exactly the same work; only the waiting disappears.
      *
-     * The run is all-or-nothing. Anything other than a clean OK for every
-     * command returns false, and the caller must fall back to the serial
-     * search() path — which, unlike a pipeline, can retry a folder.
+     * Folders that answer OK are returned; a folder that answers NO/BAD is
+     * skipped (left for the serial path to retry just that one). Only a genuine
+     * stream desync/EOF returns false for the whole run — and readPipelined()
+     * has already resynced or destroyed the connection by then, so the pool is
+     * never left poisoned.
      *
      * @param array  $folders    Folder names to search, in order
      * @param string $criteria   Searching criteria, identical for every folder
@@ -2196,28 +2257,32 @@ class rcube_imap_generic
 
             // Read the whole batch before judging it, so a folder that failed
             // leaves no unread replies behind for the next command to trip on.
-            $failed = false;
-
             foreach ($tags as $tag) {
                 list($folder, $select, $search) = $tag;
 
                 $selected = $this->readPipelined($select);
                 $found    = $selected === false ? false : $this->readPipelined($search);
 
+                // A false result is a genuine desync/EOF (readPipelined already
+                // resynced or dropped the socket): abort the whole batch and let
+                // the caller fall back to serial.
                 if ($selected === false || $found === false) {
                     return false;
                 }
 
+                // A folder that answers anything but OK (a \Noselect folder, or a
+                // localized special folder SELECT rejects) is SKIPPED, not fatal.
+                // All of its replies were read above, so nothing is left on the
+                // wire. Leaving it out of $results keeps just that folder's job
+                // incomplete, and the serial fallback answers only it — instead
+                // of the old all-or-nothing, where one bad folder in a 61-folder
+                // set discarded every folder's results and collapsed the entire
+                // search to serial.
                 if ($selected['code'] != self::ERROR_OK || $found['code'] != self::ERROR_OK) {
-                    $failed = true;
                     continue;
                 }
 
                 $results[$folder] = new rcube_result_index($folder, $found['response']);
-            }
-
-            if ($failed) {
-                return false;
             }
         }
 
