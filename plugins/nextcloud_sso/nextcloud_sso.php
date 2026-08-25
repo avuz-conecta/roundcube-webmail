@@ -25,6 +25,7 @@ class nextcloud_sso extends rcube_plugin
         $this->include_script('avuz-overrides.js');
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
+        $this->add_hook('ready', [$this, 'applySentPolicy']);
         $this->add_hook('login_after', [$this, 'gatePasswordChange']);
         $this->add_hook('password_change', [$this, 'flagPasswordChanged']);
 
@@ -244,6 +245,41 @@ class nextcloud_sso extends rcube_plugin
     {
         if (!empty($_SESSION['avuz_smtp_host'])) {
             $args['smtp_host'] = $_SESSION['avuz_smtp_host'];
+        }
+
+        return $args;
+    }
+
+    /**
+     * ready hook — runs every authenticated request, before the sendmail action.
+     * Zoho saves every outgoing message to Sent server-side (Gmail-style); if
+     * Roundcube also saved its own copy, each sent mail would appear twice. So
+     * disable Roundcube's copy for Zoho-backed sessions ONLY, leaving Zoho's
+     * single server-side copy.
+     *
+     * Scoped by the session's ACTUAL SMTP host, never set globally: this is a
+     * shared install (avuz_providers = zoho + digrepal), and non-Zoho providers
+     * do NOT auto-save, so they must keep Roundcube's copy. A direct (non-SSO)
+     * login has no stashed host and falls through to the Zoho default
+     * smtp_server, which is correctly detected here too.
+     */
+    public function applySentPolicy(array $args): array
+    {
+        $rcmail = rcmail::get_instance();
+
+        // Zoho is the DEFAULT backend: an SSO login stashes avuz_smtp_host, and a
+        // direct login falls through to the Zoho default host with nothing stashed.
+        // Only an explicitly non-Zoho provider (e.g. digrepal) stashes a host that
+        // is NOT a Zoho host — those must keep Roundcube's own Sent copy, because
+        // they do not auto-save. So: disable Roundcube's copy for everyone EXCEPT a
+        // stashed non-Zoho provider host. Detecting the exception (rather than a
+        // positive Zoho match) is what makes a direct/default Zoho login work too —
+        // that session has no host to match against.
+        $sessHost   = (string) ($_SESSION['avuz_smtp_host'] ?? '');
+        $nonZohoProvider = $sessHost !== '' && stripos($sessHost, 'zoho') === false;
+
+        if (!$nonZohoProvider) {
+            $rcmail->config->set('no_save_sent_messages', true);
         }
 
         return $args;
