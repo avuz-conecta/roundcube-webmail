@@ -150,7 +150,11 @@ body {
 .treelist li > a {
   border-radius: 8px !important;
   margin: 1px 6px !important;
-  padding-left: 10px !important;
+  /* NOTE: do NOT set padding-left here. Elastic indents nested folders by
+     depth via increasing padding-left (widgets/lists.less: 2x/3x/4x… the
+     treetoggle width). A flat `padding-left: … !important` overrides every
+     level and collapses the tree so subfolders render at their parent's
+     indent. Leave the inset to Elastic so nesting stays visible. */
 }
 
 .folderlist li > a:hover,
