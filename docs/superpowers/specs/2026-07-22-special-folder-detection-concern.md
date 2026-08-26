@@ -1,8 +1,12 @@
 # Special-Folder Detection on Zoho — Deferred Concern
 
 **Date**: 2026-07-22
-**Status**: Investigated, verified, **deliberately not fixed**. No user is affected today.
-**Trigger to revisit**: the first Zoho account provisioned in a locale other than pt_BR.
+**Status**: **IMPLEMENTED 2026-08-25** — the trigger fired (an English-provisioned Zoho account
+appeared), and the XLIST-based per-user detection sketched below was built as
+`applyXlistFolders()`/`detectXlistFolders()` in `plugins/nextcloud_sso/nextcloud_sso.php`. Verified
+on staging: pt_BR accounts map Enviadas/Rascunho/Lixeira/Spam, English accounts map
+Sent/Drafts/Trash/Spam. The `config.inc.php` globals are now fallback-only. Original analysis below.
+**Original trigger to revisit**: the first Zoho account provisioned in a locale other than pt_BR.
 
 ---
 

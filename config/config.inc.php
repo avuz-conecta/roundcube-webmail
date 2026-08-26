@@ -78,9 +78,12 @@ $config['smtp_timeout'] = 15;
 // user-level folder sitting in the alphabetical block, not Zoho's spam folder —
 // do not switch junk_mbox to it. Servers that do advertise SPECIAL-USE (the
 // digrepal provider) auto-detect per user and ignore these values entirely.
-// Latent risk (deferred, nobody affected yet): a Zoho account provisioned in a
-// non-pt_BR locale would silently get the wrong names, with no per-user detection
-// to save it. Full analysis and the XLIST-based fix:
+// These are now FALLBACK-ONLY for Zoho: the nextcloud_sso plugin detects the
+// real special folders per user via XLIST (Zoho advertises it) on storage
+// connect and overrides these at runtime — so a pt_BR account gets
+// Enviadas/Rascunho/Lixeira and an English one gets Sent/Drafts/Trash, each
+// correct. These globals apply only if XLIST detection yields nothing. See
+// applyXlistFolders() in plugins/nextcloud_sso and
 // docs/superpowers/specs/2026-07-22-special-folder-detection-concern.md
 $config['drafts_mbox']            = 'Rascunho';
 $config['sent_mbox']              = 'Enviadas';

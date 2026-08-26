@@ -26,6 +26,12 @@ class nextcloud_sso extends rcube_plugin
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
         $this->add_hook('ready', [$this, 'applySentPolicy']);
+        // Apply detected special folders on BOTH hooks: 'storage_connected'
+        // detects+caches (connection guaranteed), and 'ready' re-applies the
+        // cached map early — before the settings form snapshots config->all(),
+        // which happens before storage connects on the settings page.
+        $this->add_hook('ready', [$this, 'applyXlistFolders']);
+        $this->add_hook('storage_connected', [$this, 'applyXlistFolders']);
         $this->add_hook('login_after', [$this, 'gatePasswordChange']);
         $this->add_hook('password_change', [$this, 'flagPasswordChanged']);
 
@@ -248,6 +254,126 @@ class nextcloud_sso extends rcube_plugin
         }
 
         return $args;
+    }
+
+    /**
+     * storage_connected hook — per-user special-folder detection for Zoho.
+     *
+     * Zoho names its system folders (Sent/Drafts/Trash/Spam) in the account's
+     * OWN language: a pt_BR account has Enviadas/Rascunho/Lixeira, an English one
+     * has Sent/Drafts/Trash. Zoho does NOT advertise SPECIAL-USE, so Roundcube's
+     * native per-user detection never runs, and the config globals would point at
+     * the wrong names for any account whose locale differs from the global's.
+     *
+     * Zoho DOES advertise XLIST (the pre-RFC6154 Gmail-era mechanism), which tags
+     * each folder with its role flag (\Sent \Drafts \Trash \Spam) regardless of
+     * the folder's language. So when SPECIAL-USE is absent but XLIST is present,
+     * detect the real special folders per session via XLIST and set the *_mbox
+     * config to what the account actually has. The config.inc.php globals remain
+     * as the fallback for the (nonexistent-today) case where neither mechanism
+     * is available.
+     *
+     * Providers that DO advertise SPECIAL-USE (digrepal) are skipped — Roundcube's
+     * own detection already handles them, and this must not override it. Result
+     * is cached in the session so XLIST runs once per login, not per request.
+     */
+    public function applyXlistFolders(array $args): array
+    {
+        $rcmail = rcmail::get_instance();
+        $map    = $_SESSION['avuz_xlist_folders'] ?? null;
+
+        // Detect once per session, but ONLY when the storage connection is
+        // actually up. On 'ready' before the first connect, conn is unset, so we
+        // leave the cache alone and detection still runs on 'storage_connected'.
+        // Caching only after a real probe prevents an empty map being cached
+        // permanently by an early 'ready' call.
+        if ($map === null) {
+            $conn = $rcmail->get_storage()->conn ?? null;
+            if ($conn && $conn->connected()) {
+                $map = $this->detectXlistFolders($conn);
+                $_SESSION['avuz_xlist_folders'] = $map;
+            }
+        }
+
+        if (is_array($map)) {
+            foreach ($map as $configKey => $folder) {
+                $rcmail->config->set($configKey, $folder);
+            }
+        }
+
+        return $args;
+    }
+
+    /**
+     * Runs XLIST and maps each special-use flag to the account's real folder name.
+     * Returns [] (use config fallback) when SPECIAL-USE is present (native
+     * detection wins), XLIST is unavailable, or the command fails.
+     *
+     * @return array<string,string> config-key => folder-name
+     */
+    private function detectXlistFolders($conn): array
+    {
+        if (!$conn || !$conn->connected()) {
+            return [];
+        }
+
+        // SPECIAL-USE servers (digrepal) already auto-detect — don't override.
+        if ($conn->getCapability('SPECIAL-USE') || !$conn->getCapability('XLIST')) {
+            return [];
+        }
+
+        $flagToConfig = [
+            'sent'    => 'sent_mbox',
+            'drafts'  => 'drafts_mbox',
+            'trash'   => 'trash_mbox',
+            'spam'    => 'junk_mbox',
+            'archive' => 'archive_mbox',
+        ];
+        $map = [];
+
+        try {
+            list($code, $response) = $conn->execute('XLIST', ['""', '"*"']);
+            if ($code !== rcube_imap_generic::ERROR_OK || !is_string($response)) {
+                return [];
+            }
+
+            foreach (explode("\n", $response) as $line) {
+                // * XLIST (\Noinferiors \Sent) "/" "Enviadas"
+                if (!preg_match('/^\* XLIST \(([^)]*)\)\s+"[^"]*"\s+(.+?)\r?$/', $line, $m)) {
+                    continue;
+                }
+
+                $flags = strtolower($m[1]);
+                $name  = $this->unquoteXlistName($m[2]);
+
+                foreach ($flagToConfig as $flag => $configKey) {
+                    if (strpos($flags, '\\' . $flag) !== false) {
+                        $map[$configKey] = $name;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            rcube::write_log('errors', 'nextcloud_sso: XLIST detection failed: ' . $e->getMessage());
+            return [];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Strips the surrounding quotes from an XLIST mailbox token and decodes it
+     * from modified UTF-7 (IMAP wire encoding) to UTF-8, the form the *_mbox
+     * config expects. Special folders are ASCII in practice, so the decode is a
+     * no-op for them, but it keeps non-ASCII names correct.
+     */
+    private function unquoteXlistName(string $token): string
+    {
+        $token = trim($token);
+        if (strlen($token) >= 2 && $token[0] === '"' && substr($token, -1) === '"') {
+            $token = substr($token, 1, -1);
+        }
+
+        return rcube_charset::convert($token, 'UTF7-IMAP', 'UTF-8');
     }
 
     /**
