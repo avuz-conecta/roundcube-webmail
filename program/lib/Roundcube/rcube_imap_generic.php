@@ -1016,6 +1016,18 @@ class rcube_imap_generic
 
             $this->logged = true;
 
+            // A connection handed back by imapproxy can still carry unread replies
+            // from a PRIOR request that was aborted mid-operation — e.g. the user
+            // cleared an all-folders search while its SELECT/SEARCH replies were
+            // still arriving. imapproxy caches the connection without draining it,
+            // so this fresh request would read another request's leftover replies,
+            // desync, and hang until imap_timeout (the "search-clear breaks the
+            // next user" symptom). Right after login the socket must be quiet; if
+            // it is not, the leftover data is stale — drain it before any command.
+            if ($this->hasBufferedData()) {
+                $this->resyncConnection();
+            }
+
             // Send ID info after authentication to ensure reliable result (#7517)
             if (!empty($this->prefs['ident']) && $this->getCapability('ID')) {
                 $this->data['ID'] = $this->id($this->prefs['ident']);
@@ -2144,9 +2156,35 @@ class rcube_imap_generic
      *
      * @return bool True if the stream realigned, false if it must be destroyed
      */
+    /**
+     * Non-blocking check for unread bytes already waiting on the socket. Used
+     * right after login to spot a connection imapproxy handed back with a prior
+     * request's leftover replies still buffered. Cheap: a zero-timeout select, no
+     * round trip, so it costs nothing on a clean connection.
+     *
+     * @return bool True if bytes are waiting to be read
+     */
+    protected function hasBufferedData()
+    {
+        if (!is_resource($this->fp)) {
+            return false;
+        }
+
+        $read   = [$this->fp];
+        $write  = null;
+        $except = null;
+
+        return @stream_select($read, $write, $except, 0) > 0;
+    }
+
     protected function resyncConnection()
     {
-        $tag = $this->nextTag();
+        // A 'Z'-prefixed tag, never produced by nextTag() (always 'A%04d'), so it
+        // cannot collide with a stale reply left on the wire — tag numbers reset
+        // per request, so a plain nextTag() could match another request's leftover
+        // reply and stop the drain early. cmd_num still advances so later commands
+        // stay unique.
+        $tag = sprintf('Z%04d', ++$this->cmd_num);
 
         if ($this->putLine($tag . ' NOOP') === false) {
             return false;
