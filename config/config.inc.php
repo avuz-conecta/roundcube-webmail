@@ -37,6 +37,13 @@ if ($useProxy) {
 }
 $config['imap_timeout'] = 15;
 
+// Skip Roundcube's ID-based vendor detection. Zoho is none of the vendors
+// Roundcube special-cases (cyrus/dovecot/gmail), so detection buys nothing — and
+// Zoho's imappro endpoint answers the ID command with "BAD Invalid folder name",
+// a wasted round-trip and error on every connection. Naming the vendor here makes
+// get_vendor() return early without ever sending ID.
+$config['imap_vendor'] = 'zoho';
+
 // Disable ACL so users can rename their own folders. Zoho advertises the ACL
 // capability but NOT RIGHTS (RFC 4314), so rcube_imap::folder_info() runs
 // MYRIGHTS and falls into the legacy-ACL branch, which marks a folder norename
