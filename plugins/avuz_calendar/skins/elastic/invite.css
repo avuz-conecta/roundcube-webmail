@@ -1,0 +1,58 @@
+.avuz-invite {
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 0 0 12px;
+  background: #f7fafc;
+}
+
+.avuz-invite-title {
+  font-weight: 600;
+  font-size: 1.05em;
+  margin-bottom: 4px;
+}
+
+.avuz-invite-meta {
+  color: #5c6873;
+  font-size: 0.9em;
+  margin-bottom: 8px;
+}
+
+.avuz-invite-meet {
+  margin-bottom: 8px;
+  font-size: 0.9em;
+}
+
+.avuz-invite-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.avuz-invite-actions .btn-avuz-rsvp {
+  border: 1px solid #d8dde3;
+  border-radius: 4px;
+  background: #fff;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.avuz-invite-actions .btn-avuz-rsvp:hover {
+  background: #eef2f5;
+}
+
+.avuz-invite-actions .btn-avuz-rsvp[data-partstat="ACCEPTED"] {
+  background: #2bb5e3;
+  border-color: #2bb5e3;
+  color: #fff;
+}
+
+.avuz-invite-actions .btn-avuz-rsvp[data-partstat="ACCEPTED"]:hover {
+  background: #24a0cb;
+}
+
+.avuz-invite-status {
+  margin-top: 8px;
+  font-size: 0.85em;
+  color: #5c6873;
+}
