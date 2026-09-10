@@ -100,8 +100,10 @@ class avuz_calendar extends rcube_plugin
         $me = $rcmail->get_user_email();
         $messages = [];
 
-        // 1) iTip REPLY over SMTP
-        $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat, (string) $inv['summary']);
+        // 1) iTip REPLY over SMTP — thread it to the original invite so Gmail
+        // treats it as a reply (drastically better inbox placement).
+        $in_reply_to = (string) ($message->headers->messageID ?? '');
+        $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat, (string) $inv['summary'], $in_reply_to);
         $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('reply_failed');
 
         // 2) calendar add (accept/tentative only). Store a copy already marked
@@ -122,13 +124,13 @@ class avuz_calendar extends rcube_plugin
         $this->reply_done($rcmail, implode(' · ', $messages));
     }
 
-    private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat, string $summary): bool {
+    private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat, string $summary, string $in_reply_to = ''): bool {
         try {
             $reply_ics = avuz_itip_reply::build($request_ics, $me, $partstat);
             $verb = $this->partstat_verb($partstat);
             $subject = $verb . ': ' . $summary;
             $text = $me . ' — ' . $verb . ': ' . $summary;
-            $mime = avuz_reply_mime::build_reply_mime($reply_ics, $me, $organizer, $subject, $text);
+            $mime = avuz_reply_mime::build_reply_mime($reply_ics, $me, $organizer, $subject, $text, $in_reply_to);
             $err = null;
             $body = null;
             return (bool) $rcmail->deliver_message($mime, $me, $organizer, $err, $body, null, false);
