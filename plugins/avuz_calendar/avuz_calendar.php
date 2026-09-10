@@ -106,7 +106,6 @@ class avuz_calendar extends rcube_plugin
             $mime = new Mail_mime(["eol" => "\r\n"]);
             $mime->headers($headers);
             $mime->setTXTBody($reply_ics);
-            $send = new rcmail_sendmail(['sendmail' => false]);
             $err = null;
             $body = null;
             return (bool) $rcmail->deliver_message($mime, $me, $organizer, $err, $body, null, false);
