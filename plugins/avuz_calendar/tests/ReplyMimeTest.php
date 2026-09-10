@@ -24,4 +24,17 @@ class ReplyMimeTest extends TestCase {
 
         $this->assertStringContainsString('METHOD:REPLY', $message);
     }
+
+    public function testMultipartAlternativeWhenTextProvided(): void {
+        $ics = "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n";
+        $mime = avuz_reply_mime::build_reply_mime($ics, 'user@empresa.com', 'organizer@example.com', 'Accepted: teste', 'user accepted: teste');
+        $mime->get();
+        $headers = $mime->txtHeaders();
+
+        $this->assertMatchesRegularExpression('/^Content-Type:\s*multipart\/alternative/mi', $headers);
+        $message = $mime->getMessage();
+        $this->assertStringContainsString('text/plain', $message);
+        $this->assertStringContainsString('text/calendar', $message);
+        $this->assertStringContainsString('method=REPLY', $message);
+    }
 }

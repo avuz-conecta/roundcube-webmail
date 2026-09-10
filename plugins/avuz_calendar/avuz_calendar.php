@@ -101,7 +101,7 @@ class avuz_calendar extends rcube_plugin
         $messages = [];
 
         // 1) iTip REPLY over SMTP
-        $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat);
+        $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat, (string) $inv['summary']);
         $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('reply_failed');
 
         // 2) calendar add (accept/tentative only). Store a copy already marked
@@ -122,10 +122,13 @@ class avuz_calendar extends rcube_plugin
         $this->reply_done($rcmail, implode(' · ', $messages));
     }
 
-    private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat): bool {
+    private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat, string $summary): bool {
         try {
             $reply_ics = avuz_itip_reply::build($request_ics, $me, $partstat);
-            $mime = avuz_reply_mime::build_reply_mime($reply_ics, $me, $organizer, $this->gettext('reply_subject'));
+            $verb = $this->partstat_verb($partstat);
+            $subject = $verb . ': ' . $summary;
+            $text = $me . ' — ' . $verb . ': ' . $summary;
+            $mime = avuz_reply_mime::build_reply_mime($reply_ics, $me, $organizer, $subject, $text);
             $err = null;
             $body = null;
             return (bool) $rcmail->deliver_message($mime, $me, $organizer, $err, $body, null, false);
@@ -133,6 +136,11 @@ class avuz_calendar extends rcube_plugin
             rcube::write_log('errors', 'avuz_calendar reply failed: ' . $e->getMessage());
             return false;
         }
+    }
+
+    private function partstat_verb(string $partstat): string {
+        $keys = ['ACCEPTED' => 'reply_accepted', 'TENTATIVE' => 'reply_tentative', 'DECLINED' => 'reply_declined'];
+        return $this->gettext($keys[$partstat] ?? 'reply_accepted');
     }
 
     private function reply_done($rcmail, string $message): void {

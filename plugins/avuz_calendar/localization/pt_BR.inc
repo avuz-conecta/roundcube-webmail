@@ -9,3 +9,6 @@ $labels['reply_sent']    = 'Resposta enviada';
 $labels['add_failed']    = 'Não foi possível adicionar ao calendário';
 $labels['reply_failed']  = 'Não foi possível enviar a resposta';
 $labels['reply_subject'] = 'Resposta ao convite';
+$labels['reply_accepted']  = 'Aceito';
+$labels['reply_tentative'] = 'Talvez';
+$labels['reply_declined']  = 'Recusado';
