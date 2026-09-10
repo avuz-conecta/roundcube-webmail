@@ -13,8 +13,15 @@ class avuz_reply_mime {
      * method=...`.
      */
     public static function build_reply_mime(string $reply_ics, string $from, string $to, string $subject): Mail_mime {
+        $domain = substr(strrchr($from, '@') ?: '@localhost', 1);
         $mime = new Mail_mime(['eol' => "\r\n"]);
-        $mime->headers(['From' => $from, 'To' => $to, 'Subject' => $subject]);
+        $mime->headers([
+            'From'       => $from,
+            'To'         => $to,
+            'Subject'    => $subject,
+            'Date'       => date('r'),
+            'Message-ID' => '<' . bin2hex(random_bytes(16)) . '@' . $domain . '>',
+        ]);
         $mime->setCalendarBody($reply_ics, false, false, 'REPLY', 'UTF-8');
         return $mime;
     }
