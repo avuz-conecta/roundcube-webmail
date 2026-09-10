@@ -147,6 +147,7 @@ $config['plugins'] = [
     'avuz_search_notice',
     'avuz_body_cache',   // AVUZ: browser IndexedDB body cache (inert unless AVUZ_BODY_CACHE=1)
     'markasjunk',        // AVUZ: Junk / Not-Junk buttons — pure IMAP folder move (Zoho has no learning API)
+    'avuz_calendar',
 ];
 
 // -- Mark as Junk / Not Junk (markasjunk plugin) --

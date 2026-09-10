@@ -1,0 +1,1 @@
+{ "name": "avuz/avuz_calendar", "require": { "sabre/vobject": "^4.5" }, "config": { "platform": { "php": "8.2" } } }

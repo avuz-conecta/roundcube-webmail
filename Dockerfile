@@ -27,6 +27,7 @@ COPY plugins/avuz_search_notice /var/www/roundcube/plugins/avuz_search_notice
 # avuz_body_cache: browser IndexedDB body-cache plugin (inert unless AVUZ_BODY_CACHE=1). See customizations.json.
 COPY plugins/avuz_body_cache /var/www/roundcube/plugins/avuz_body_cache
 COPY plugins/password/drivers/zoho_broker.php /var/www/roundcube/plugins/password/drivers/zoho_broker.php
+COPY plugins/avuz_calendar /var/www/roundcube/plugins/avuz_calendar
 COPY skins/avuz /var/www/roundcube/skins/avuz
 # elastic mail.html: the "Sent date" sort option is removed. Zoho advertises no
 # SORT capability, so ordering by the Date: header forces Roundcube to FETCH the
