@@ -12,6 +12,7 @@ class avuz_calendar extends rcube_plugin
         require_once __DIR__ . '/lib/itip_reply.php';
         require_once __DIR__ . '/lib/nc_calendar_client.php';
         require_once __DIR__ . '/lib/reply_mime.php';
+        require_once __DIR__ . '/lib/calendar_event.php';
 
         $this->add_hook('message_load', [$this, 'on_message_load']);
         $this->add_hook('template_object_messagebody', [$this, 'on_message_body']);
@@ -103,14 +104,18 @@ class avuz_calendar extends rcube_plugin
         $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat);
         $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('reply_failed');
 
-        // 2) calendar add (accept/tentative only)
+        // 2) calendar add (accept/tentative only). Store a copy already marked
+        // with the chosen PARTSTAT + SCHEDULE-AGENT=CLIENT so the calendar does
+        // not re-prompt the user or send a duplicate reply — we already sent the
+        // iTip REPLY over SMTP above.
         if ($partstat !== 'DECLINED') {
             $instances = (array) $rcmail->config->get('avuz_nc_instances', []);
             $base = avuz_nc_client::resolve_base($instances, $me);
             if ($base) {
+                $event_ics = avuz_calendar_event::for_calendar($ics, $me, $partstat);
                 $secret = (string) getenv('ROUNDCUBE_SSO_SECRET');
-                $env = avuz_nc_client::sign($ics, $me, $secret, time());
-                $res = avuz_nc_client::post($base, $ics, $inv['uid'], $env);
+                $env = avuz_nc_client::sign($event_ics, $me, $secret, time());
+                $res = avuz_nc_client::post($base, $event_ics, $inv['uid'], $env);
                 $messages[] = $res['ok'] ? $this->gettext('added') : $this->gettext('add_failed');
             }
         }
