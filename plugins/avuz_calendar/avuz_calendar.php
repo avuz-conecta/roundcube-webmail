@@ -10,6 +10,7 @@ class avuz_calendar extends rcube_plugin
         require_once __DIR__ . '/lib/ical_invite.php';
         require_once __DIR__ . '/lib/itip_reply.php';
         require_once __DIR__ . '/lib/nc_calendar_client.php';
+        require_once __DIR__ . '/lib/reply_mime.php';
 
         $this->add_hook('message_part_structure', [$this, 'on_part_structure']);
         $this->add_hook('template_object_messagebody', [$this, 'on_message_body']);
@@ -33,7 +34,7 @@ class avuz_calendar extends rcube_plugin
         $message = new rcube_message($uid, $mbox);
         foreach ($message->attachments as $part) {
             if (stripos((string) $part->mimetype, 'text/calendar') === false) { continue; }
-            $ics = $message->get_part_body($part->mime_id, true);
+            $ics = $message->get_part_body($part->mime_id, false);
             $inv = avuz_ical_invite::from_ics($ics);
             if (!$inv) { continue; }
             $this->add_texts('localization/', true);
@@ -70,7 +71,10 @@ class avuz_calendar extends rcube_plugin
         if (!in_array($partstat, $allowed, true)) { return; }
 
         $message = new rcube_message($uid, $mbox);
-        $ics = $message->get_part_body($part, true);
+        // Raw bytes: this exact string is both signed/hashed and POSTed to
+        // Nextcloud, and is the source for the iTip REPLY below, so it must
+        // not go through charset/format conversion ($formatted = false).
+        $ics = $message->get_part_body($part, false);
         $inv = avuz_ical_invite::from_ics($ics);
         if (!$inv) { $this->reply_done($rcmail, $this->gettext('add_failed')); return; }
 
@@ -79,7 +83,7 @@ class avuz_calendar extends rcube_plugin
 
         // 1) iTip REPLY over SMTP
         $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat);
-        $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('add_failed');
+        $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('reply_failed');
 
         // 2) calendar add (accept/tentative only)
         if ($partstat !== 'DECLINED') {
@@ -98,14 +102,7 @@ class avuz_calendar extends rcube_plugin
     private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat): bool {
         try {
             $reply_ics = avuz_itip_reply::build($request_ics, $me, $partstat);
-            $headers = [
-                'From' => $me, 'To' => $organizer,
-                'Subject' => $this->gettext('reply_subject'),
-                'Content-Type' => 'text/calendar; method=REPLY; charset=UTF-8',
-            ];
-            $mime = new Mail_mime(["eol" => "\r\n"]);
-            $mime->headers($headers);
-            $mime->setTXTBody($reply_ics);
+            $mime = avuz_reply_mime::build_reply_mime($reply_ics, $me, $organizer, $this->gettext('reply_subject'));
             $err = null;
             $body = null;
             return (bool) $rcmail->deliver_message($mime, $me, $organizer, $err, $body, null, false);
