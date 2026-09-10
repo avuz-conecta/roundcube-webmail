@@ -2,7 +2,8 @@
 class avuz_calendar extends rcube_plugin
 {
     public $task = 'mail';
-    public $has_calendar_part = false;
+    private $invite_message = null;
+    private $invite_part = null;
 
     function init()
     {
@@ -12,38 +13,55 @@ class avuz_calendar extends rcube_plugin
         require_once __DIR__ . '/lib/nc_calendar_client.php';
         require_once __DIR__ . '/lib/reply_mime.php';
 
-        $this->add_hook('message_part_structure', [$this, 'on_part_structure']);
+        $this->add_hook('message_load', [$this, 'on_message_load']);
         $this->add_hook('template_object_messagebody', [$this, 'on_message_body']);
         $this->register_action('plugin.avuz_calendar_rsvp', [$this, 'on_rsvp']);
         $this->include_stylesheet('skins/elastic/invite.css');
         $this->include_script('js/invite.js');
     }
 
-    function on_part_structure($p) {
-        if (stripos((string)($p['structure']->mimetype ?? ''), 'text/calendar') !== false) {
-            $this->has_calendar_part = true;
+    /**
+     * The text/calendar part carrying a Google/Outlook invite lives inside a
+     * multipart/alternative, which Roundcube adds straight to the attachments
+     * list WITHOUT emitting message_part_structure — so detection must scan the
+     * already-parsed attachments, not that hook. Returns the first text/calendar
+     * part, or null.
+     */
+    static function find_calendar_part(array $attachments) {
+        foreach ($attachments as $part) {
+            if (stripos((string) ($part->mimetype ?? ''), 'text/calendar') !== false) {
+                return $part;
+            }
+        }
+        return null;
+    }
+
+    function on_message_load($p) {
+        $message = $p['object'] ?? null;
+        if ($message && !empty($message->attachments)) {
+            $part = self::find_calendar_part($message->attachments);
+            if ($part) {
+                $this->invite_message = $message;
+                $this->invite_part = $part;
+            }
         }
         return $p;
     }
 
     function on_message_body($p) {
-        if (empty($this->has_calendar_part)) { return $p; }
+        if (!$this->invite_message || !$this->invite_part) { return $p; }
         $rcmail = rcmail::get_instance();
-        $uid  = rcube_utils::get_input_string('_uid', rcube_utils::INPUT_GET);
-        $mbox = rcube_utils::get_input_string('_mbox', rcube_utils::INPUT_GET);
-        $message = new rcube_message($uid, $mbox);
-        foreach ($message->attachments as $part) {
-            if (stripos((string) $part->mimetype, 'text/calendar') === false) { continue; }
-            $ics = $message->get_part_body($part->mime_id, false);
-            $inv = avuz_ical_invite::from_ics($ics);
-            if (!$inv) { continue; }
-            $this->add_texts('localization/', true);
-            $rcmail->output->set_env('avuz_calendar_invite', [
-                'uid' => $inv['uid'], 'mbox' => $mbox, 'msg_uid' => $uid, 'part' => $part->mime_id,
-            ]);
-            $p['content'] = $this->render_card($inv) . $p['content'];
-            break;
-        }
+        $ics = $this->invite_message->get_part_body($this->invite_part->mime_id, false);
+        $inv = avuz_ical_invite::from_ics($ics);
+        if (!$inv) { return $p; }
+        $this->add_texts('localization/', true);
+        $rcmail->output->set_env('avuz_calendar_invite', [
+            'uid'     => $inv['uid'],
+            'mbox'    => $this->invite_message->folder,
+            'msg_uid' => $this->invite_message->uid,
+            'part'    => $this->invite_part->mime_id,
+        ]);
+        $p['content'] = $this->render_card($inv) . $p['content'];
         return $p;
     }
 
