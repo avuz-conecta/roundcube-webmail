@@ -195,6 +195,9 @@ $config['password_strength_driver']  = null;
 // password_hosts is set in the IMAP proxy-gate block above (differs by proxy vs direct mode)
 $config['avuz_broker_url']           = getenv('AVUZ_BROKER_URL') ?: 'http://broker:9000';
 $config['avuz_broker_secret']        = getenv('AVUZ_BROKER_SECRET') ?: '';
+// email-domain -> AvuzConecta (Nextcloud) base URL, for calendar invite import
+$avuz_nc = getenv('AVUZ_NC_INSTANCES');
+$config['avuz_nc_instances'] = $avuz_nc ? (array) json_decode($avuz_nc, true) : [];
 
 // -- Skin --
 $config['skin'] = 'avuz';
