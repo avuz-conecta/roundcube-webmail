@@ -59,6 +59,65 @@ class avuz_calendar extends rcube_plugin
             . '<div class="avuz-invite-status" hidden></div></div>';
     }
 
-    // Implemented in Task 12:
-    function on_rsvp() {}
+    function on_rsvp() {
+        $rcmail = rcmail::get_instance();
+        $this->add_texts('localization/');
+        $uid  = rcube_utils::get_input_string('_uid', rcube_utils::INPUT_POST);
+        $mbox = rcube_utils::get_input_string('_mbox', rcube_utils::INPUT_POST);
+        $part = rcube_utils::get_input_string('_part', rcube_utils::INPUT_POST);
+        $partstat = rcube_utils::get_input_string('_partstat', rcube_utils::INPUT_POST);
+        $allowed = ['ACCEPTED','TENTATIVE','DECLINED'];
+        if (!in_array($partstat, $allowed, true)) { return; }
+
+        $message = new rcube_message($uid, $mbox);
+        $ics = $message->get_part_body($part, true);
+        $inv = avuz_ical_invite::from_ics($ics);
+        if (!$inv) { $this->reply_done($rcmail, $this->gettext('add_failed')); return; }
+
+        $me = $rcmail->get_user_email();
+        $messages = [];
+
+        // 1) iTip REPLY over SMTP
+        $reply_ok = $this->send_reply($rcmail, $inv['organizer'], $me, $ics, $partstat);
+        $messages[] = $reply_ok ? $this->gettext('reply_sent') : $this->gettext('add_failed');
+
+        // 2) calendar add (accept/tentative only)
+        if ($partstat !== 'DECLINED') {
+            $instances = (array) $rcmail->config->get('avuz_nc_instances', []);
+            $base = avuz_nc_client::resolve_base($instances, $me);
+            if ($base) {
+                $secret = (string) getenv('ROUNDCUBE_SSO_SECRET');
+                $env = avuz_nc_client::sign($ics, $me, $secret, time());
+                $res = avuz_nc_client::post($base, $ics, $inv['uid'], $env);
+                $messages[] = $res['ok'] ? $this->gettext('added') : $this->gettext('add_failed');
+            }
+        }
+        $this->reply_done($rcmail, implode(' · ', $messages));
+    }
+
+    private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat): bool {
+        try {
+            $reply_ics = avuz_itip_reply::build($request_ics, $me, $partstat);
+            $headers = [
+                'From' => $me, 'To' => $organizer,
+                'Subject' => $this->gettext('reply_subject'),
+                'Content-Type' => 'text/calendar; method=REPLY; charset=UTF-8',
+            ];
+            $mime = new Mail_mime(["eol" => "\r\n"]);
+            $mime->headers($headers);
+            $mime->setTXTBody($reply_ics);
+            $send = new rcmail_sendmail(['sendmail' => false]);
+            $err = null;
+            $body = null;
+            return (bool) $rcmail->deliver_message($mime, $me, $organizer, $err, $body, null, false);
+        } catch (\Throwable $e) {
+            rcube::write_log('errors', 'avuz_calendar reply failed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function reply_done($rcmail, string $message): void {
+        $rcmail->output->command('plugin.avuz_calendar_rsvp_done', ['message' => $message]);
+        $rcmail->output->send();
+    }
 }
