@@ -39,13 +39,18 @@ class avuz_calendar extends rcube_plugin
 
     function on_message_load($p) {
         $message = $p['object'] ?? null;
-        if ($message && !empty($message->attachments)) {
-            $part = self::find_calendar_part($message->attachments);
-            if ($part) {
-                $this->invite_message = $message;
-                $this->invite_part = $part;
-            }
-        }
+        if (!$message || empty($message->attachments)) { return $p; }
+        $part = self::find_calendar_part($message->attachments);
+        if (!$part) { return $p; }
+        // Only engage when this user's AvuzConecta (Nextcloud) instance is
+        // known. Otherwise the card's calendar-add cannot work, so showing it
+        // would be misleading. The AVUZ_NC_INSTANCES map is the per-customer
+        // rollout switch: a domain becomes live the moment it is in the map.
+        $rcmail = rcmail::get_instance();
+        $instances = (array) $rcmail->config->get('avuz_nc_instances', []);
+        if (!avuz_nc_client::resolve_base($instances, (string) $rcmail->get_user_email())) { return $p; }
+        $this->invite_message = $message;
+        $this->invite_part = $part;
         return $p;
     }
 
