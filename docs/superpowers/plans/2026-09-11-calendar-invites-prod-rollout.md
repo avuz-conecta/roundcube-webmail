@@ -16,10 +16,12 @@ Validated end-to-end on staging (shared RC `avuz-mail-roundcube-2` +
 - **One shared Roundcube** — prod stack **36**, endpoint **5** (`avuz-mail-roundcube`).
   Serves every customer via `nc_token` SSO. (Stack **65** / endpoint **9** is a
   second, unidentified RC — leave untouched; confirm it's not customer-facing.)
-- **Many separate customer Nextcloud instances** — one stack per customer,
-  spread across endpoints (arkua, cfm-advogados, comprev, consultt-agro,
-  digrepal, eco-ambiental, endopasso, grupo-vidalar, progetti, ramires,
-  app360, office01–04, …). All share the same `ROUNDCUBE_SSO_SECRET` as RC.
+- **AvuzConecta customer Nextcloud instances live ONLY on two hosts:**
+  `avuz-conecta-app1` and `avuz-conecta-app2`. Every other stack in the
+  Portainer list (arkua, cfm-advogados, comprev, guacamole, rclone, talk, …)
+  is a different product/service and is **out of scope** — do not touch.
+  All in-scope NC instances share the same `ROUNDCUBE_SSO_SECRET` as RC.
+  Build the exact target list from the stacks on those two endpoints only.
 - Consequence: the RC image is global (all customers), but each customer's NC
   stack must be redeployed to get the `conectamail` calendar endpoint. Until a
   customer's NC has it, their users must NOT see a working-looking card.
@@ -33,10 +35,9 @@ and you add it only *after* their NC is upgraded. The map is the rollout switch.
 
 ## Phase 0 — Preconditions (do before any prod deploy)
 
-- [ ] **M1 gate merged**: card renders only when the user's email-domain is in
-      `avuz_nc_instances`. Without it, every customer on the shared RC sees the
-      card before their NC is ready. This is the gate that makes phased rollout
-      safe. (RC change; small.)
+- [x] **M1 gate merged** (`49102ac0a`): card renders only when the user's
+      email-domain is in `avuz_nc_instances`. This is the gate that makes phased
+      rollout safe. Deployed + verified on staging.
 - [ ] Confirm `ROUNDCUBE_SSO_SECRET` is identical on RC stack 36 and on each
       target customer NC (it already is — same secret powers existing SSO).
 - [ ] Confirm the second RC (stack 65 / endpoint 9) is not customer-facing, or
