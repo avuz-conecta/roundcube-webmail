@@ -43,7 +43,35 @@ class avuz_calendar_event {
                 'SCHEDULE-AGENT' => 'CLIENT',
             ]);
         }
+
+        if (isset($event->DESCRIPTION)) {
+            $clean = self::clean_description((string) $event->DESCRIPTION);
+            if ($clean === '') { unset($event->DESCRIPTION); }
+            else { $event->DESCRIPTION = $clean; }
+        }
+
         return $vcal->serialize();
+    }
+
+    /**
+     * Strip Google Meet's auto-generated boilerplate from the description. Google
+     * wraps it between decorative separator lines (-::~:~::~ … ::-) and repeats
+     * "Join with Google Meet:", "Learn more about Meet at:", "Please do not edit
+     * this section." The Meet URL is already surfaced (LOCATION / the card), so
+     * the whole block is noise in the stored event. Any real user-written text
+     * outside the block is preserved.
+     */
+    static function clean_description(string $desc): string {
+        $lines = preg_split('/\r\n|\r|\n/', $desc);
+        $out = [];
+        $in_block = false;
+        foreach ($lines as $line) {
+            if (preg_match('/^\s*-::~[~:\s.-]*::-\s*$/', $line)) { $in_block = !$in_block; continue; }
+            if ($in_block) { continue; }
+            if (preg_match('/^\s*(Join with Google Meet:|Learn more about Meet at:|Please do not edit this section\.)/i', $line)) { continue; }
+            $out[] = $line;
+        }
+        return trim(implode("\n", $out));
     }
 
     private static function normalize(string $addr): string {

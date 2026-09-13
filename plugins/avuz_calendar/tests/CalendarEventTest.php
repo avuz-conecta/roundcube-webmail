@@ -41,4 +41,27 @@ class CalendarEventTest extends TestCase {
         $this->assertStringContainsString('patrick@avuz.cloud', $out);
         $this->assertStringContainsString('PARTSTAT=ACCEPTED', $out);
     }
+
+    public function testCleanDescriptionStripsGoogleMeetBoilerplate(): void {
+        $desc = "-::~:~::~:~::~:~::-\nJoin with Google Meet: https://meet.google.com/abc\n"
+            . "Learn more about Meet at: https://support.google.com/a/users/answer/9282720\n\n"
+            . "Please do not edit this section.\n-::~:~::~:~::~:~::-";
+        $this->assertSame('', avuz_calendar_event::clean_description($desc));
+    }
+
+    public function testCleanDescriptionKeepsUserText(): void {
+        $desc = "Pauta: fechamento do trimestre\n-::~:~::~::-\nJoin with Google Meet: https://meet.google.com/abc\n-::~:~::~::-";
+        $this->assertSame('Pauta: fechamento do trimestre', avuz_calendar_event::clean_description($desc));
+    }
+
+    public function testForCalendarStripsBoilerplateFromStoredEvent(): void {
+        $req = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:evt@google.com\r\n"
+            . "SUMMARY:Reuniao\r\nDTSTART:20260913T200000Z\r\nORGANIZER:mailto:boss@gmail.com\r\n"
+            . "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:patrick@avuz.cloud\r\n"
+            . "DESCRIPTION:-::~:~::~:~::-\\nJoin with Google Meet: https://meet.google.com/abc\\n-::~:~::~:~::-\r\n"
+            . "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        $out = avuz_calendar_event::for_calendar($req, 'patrick@avuz.cloud', 'ACCEPTED');
+        $this->assertStringNotContainsString('~:~', $out);
+        $this->assertStringNotContainsString('Join with Google Meet', $out);
+    }
 }
