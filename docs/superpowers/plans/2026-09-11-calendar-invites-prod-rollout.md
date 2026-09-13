@@ -16,10 +16,10 @@ Validated end-to-end on staging (shared RC `avuz-mail-roundcube-2` +
 - **Main shared Roundcube** — prod stack **36**, endpoint **5** (`avuz-mail-roundcube`).
   Serves customers via `nc_token` SSO (stored-password path — NOT limited to
   `ZOHO_TENANTS`). The prod map goes here. Runs the `:latest`/versioned image.
-- **Second Roundcube** — stack **65**, endpoint **9**, running the **`:staging`**
-  image, `ZOHO_TENANTS` = grupovidalar/auster/raiven only. Looks vidalar-specific
-  and possibly stale. **CONFIRM** whether any customer still hits it before rollout;
-  if it serves live users, it needs the same 1.7.0 image + map, otherwise leave it.
+- **Second Roundcube (DEAD — ignore)** — stack **65** points at endpoint **9**,
+  which no longer exists (endpoint list is 3/5/6/8/10/11; the API 404s on 9).
+  Its containers can't be listed — it serves no one. Orphaned stack definition.
+  No action. All live webmail is stack 36.
 - **AvuzConecta customer Nextcloud instances live ONLY on two hosts:**
   `avuz-conecta-app1` and `avuz-conecta-app2`. Every other stack in the
   Portainer list (arkua, cfm-advogados, comprev, guacamole, rclone, talk, …)
