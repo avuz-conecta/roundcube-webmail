@@ -71,14 +71,37 @@ class avuz_calendar extends rcube_plugin
         return $p;
     }
 
+    /**
+     * Format the invite window as pt-BR (dd/mm/yyyy hh:mm, plus end time when
+     * present), converted to $tz when given. Falls back to the raw ISO on a
+     * parse error. Pure/static so it is unit-testable without rcmail.
+     */
+    static function format_when(string $start_iso, string $end_iso = '', ?\DateTimeZone $tz = null): string {
+        try { $start = new \DateTime($start_iso); } catch (\Throwable $e) { return $start_iso; }
+        if ($tz) { $start->setTimezone($tz); }
+        $out = $start->format('d/m/Y H:i');
+        if ($end_iso !== '') {
+            try {
+                $end = new \DateTime($end_iso);
+                if ($tz) { $end->setTimezone($tz); }
+                $out .= ' – ' . $end->format('H:i');
+            } catch (\Throwable $e) {}
+        }
+        return $out;
+    }
+
     private function render_card(array $inv): string {
         $rc = rcmail::get_instance();
         $esc = fn($s) => rcube::Q((string) $s);
+        $tz = null;
+        $tzname = (string) $rc->config->get('timezone');
+        if ($tzname !== '' && $tzname !== 'auto') { try { $tz = new \DateTimeZone($tzname); } catch (\Throwable $e) {} }
+        $when = self::format_when((string) $inv['start'], (string) ($inv['end'] ?? ''), $tz);
         $meet = $inv['meet_url'] ? '<a href="' . $esc($inv['meet_url']) . '" target="_blank">' . $esc($inv['meet_url']) . '</a>' : '';
         $btn = fn($k,$l) => '<button class="btn-avuz-rsvp" data-partstat="' . $k . '">' . $esc($rc->gettext($l, 'avuz_calendar')) . '</button>';
         return '<div id="avuz-invite-card" class="avuz-invite">'
             . '<div class="avuz-invite-title">' . $esc($inv['summary']) . '</div>'
-            . '<div class="avuz-invite-meta">' . $esc($inv['start']) . ' — ' . $esc($inv['organizer']) . '</div>'
+            . '<div class="avuz-invite-meta">' . $esc($when) . ' — ' . $esc($inv['organizer']) . '</div>'
             . ($meet ? '<div class="avuz-invite-meet">' . $meet . '</div>' : '')
             . '<div class="avuz-invite-actions">' . $btn('ACCEPTED','accept') . $btn('TENTATIVE','tentative') . $btn('DECLINED','decline') . '</div>'
             . '<div class="avuz-invite-status" hidden></div></div>';
