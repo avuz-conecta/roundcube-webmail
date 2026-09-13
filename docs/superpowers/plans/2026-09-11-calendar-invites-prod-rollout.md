@@ -68,10 +68,12 @@ reached via three branded `*.avuz.app` hosts — each mail domain maps to its ow
 branded host (all verified HTTP 200, NC 33.0.8.2). The calendar POST works to any
 of them since they hit the same container + user DB.
 
+**Also mapped:** `avuz.cloud` → `https://app3.avuz.app` (Patrick's own prod
+instance). 17 domains total live in prod.
+
 **Not mapped (no org domain — every user is on a public provider):** `endopasso`
 (gmail/terra), `cartorio-veranopolis` (yahoo). The M1 gate means their users see
-no card — safe. Revisit if they migrate to an org domain. `avuz-app3` = internal
-(`avuz.cloud`), add only if you want the feature there.
+no card — safe. Revisit if they migrate to an org domain.
 
 **Rollout order (phased via the map):** deploy the NC 1.7.0 image to each instance,
 then add that instance's domain(s) to the map. You do NOT have to add all 16 at
