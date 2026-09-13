@@ -13,9 +13,13 @@ Validated end-to-end on staging (shared RC `avuz-mail-roundcube-2` +
 
 ## Prod topology (why this is phased)
 
-- **One shared Roundcube** — prod stack **36**, endpoint **5** (`avuz-mail-roundcube`).
-  Serves every customer via `nc_token` SSO. (Stack **65** / endpoint **9** is a
-  second, unidentified RC — leave untouched; confirm it's not customer-facing.)
+- **Main shared Roundcube** — prod stack **36**, endpoint **5** (`avuz-mail-roundcube`).
+  Serves customers via `nc_token` SSO (stored-password path — NOT limited to
+  `ZOHO_TENANTS`). The prod map goes here. Runs the `:latest`/versioned image.
+- **Second Roundcube** — stack **65**, endpoint **9**, running the **`:staging`**
+  image, `ZOHO_TENANTS` = grupovidalar/auster/raiven only. Looks vidalar-specific
+  and possibly stale. **CONFIRM** whether any customer still hits it before rollout;
+  if it serves live users, it needs the same 1.7.0 image + map, otherwise leave it.
 - **AvuzConecta customer Nextcloud instances live ONLY on two hosts:**
   `avuz-conecta-app1` and `avuz-conecta-app2`. Every other stack in the
   Portainer list (arkua, cfm-advogados, comprev, guacamole, rclone, talk, …)
@@ -32,6 +36,39 @@ in the map. So a customer is "live" the moment their domain is added to the map 
 and you add it only *after* their NC is upgraded. The map is the rollout switch.
 
 ---
+
+## Prod instance map (resolved 2026-09-13)
+
+Built from `occ user:list` on every NC on app1/app2 (uids are the users' emails).
+Public providers (gmail/hotmail/yahoo/terra) are excluded — they are not customer
+domains. NC base URL = `https://<NEXTCLOUD_TRUSTED_DOMAIN>`.
+
+| Customer mail domain(s) | NC instance (stack) | NC base URL |
+|---|---|---|
+| grupovidalar.com.br, raiven.com.br, austerengenharia.com.br | grupo-vidalar (60, app2) | https://vidalar.avuz.app |
+| progetticonstrutora.com.br | progetti (92) | https://progetti.avuz.app |
+| digrepal.com.br | digrepal (51) | https://digrepal.avuz.app |
+| consulttagro.com | consultt-agro (57) | https://consulttagro.avuz.app |
+| ecoambiental-consultoria.com.br, ecoepi.com.br | eco-ambiental (61) | https://eco-ambiental.avuz.app |
+| cfmadvocacia.com, ctmadvocacia.com | cfm-advogados (59) | https://cfm.avuz.app |
+| arkua.com.br | arkua (81) | https://arkua.avuz.app |
+| dellannopassofundo.com.br, agfeleuterio.com.br, tiagoguerreiro.com.br, eggies.com.br | ramires (70) | https://ramires.avuz.app |
+| comprev.seg.br | comprev (69) | https://comprev.avuz.app |
+
+16 domains → 9 instances. The `AVUZ_NC_INSTANCES` JSON value:
+
+```json
+{"grupovidalar.com.br":"https://vidalar.avuz.app","raiven.com.br":"https://vidalar.avuz.app","austerengenharia.com.br":"https://vidalar.avuz.app","progetticonstrutora.com.br":"https://progetti.avuz.app","digrepal.com.br":"https://digrepal.avuz.app","consulttagro.com":"https://consulttagro.avuz.app","ecoambiental-consultoria.com.br":"https://eco-ambiental.avuz.app","ecoepi.com.br":"https://eco-ambiental.avuz.app","cfmadvocacia.com":"https://cfm.avuz.app","ctmadvocacia.com":"https://cfm.avuz.app","arkua.com.br":"https://arkua.avuz.app","dellannopassofundo.com.br":"https://ramires.avuz.app","agfeleuterio.com.br":"https://ramires.avuz.app","tiagoguerreiro.com.br":"https://ramires.avuz.app","eggies.com.br":"https://ramires.avuz.app","comprev.seg.br":"https://comprev.avuz.app"}
+```
+
+**Not mapped (no org domain — every user is on a public provider):** `endopasso`
+(gmail/terra), `cartorio-veranopolis` (yahoo). The M1 gate means their users see
+no card — safe. Revisit if they migrate to an org domain. `avuz-app3` = internal
+(`avuz.cloud`), add only if you want the feature there.
+
+**Rollout order (phased via the map):** deploy the NC 1.7.0 image to each instance,
+then add that instance's domain(s) to the map. You do NOT have to add all 16 at
+once — the map is per-line, so add rows as each NC is confirmed on the new image.
 
 ## Phase 0 — Preconditions (do before any prod deploy)
 
