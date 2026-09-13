@@ -19,7 +19,15 @@ class avuz_reply_mime {
      */
     public static function build_reply_mime(string $reply_ics, string $from, string $to, string $subject, string $text = '', string $in_reply_to = ''): Mail_mime {
         $domain = substr(strrchr($from, '@') ?: '@localhost', 1);
-        $mime = new Mail_mime(['eol' => "\r\n"]);
+        // Declare UTF-8 for the header (Subject) and the text/plain part. Mail_mime
+        // defaults head_charset/text_charset to ISO-8859-1, so accented summaries
+        // ("Reunião") and the em-dash separator ship as mojibake without this.
+        $mime = new Mail_mime([
+            'eol'          => "\r\n",
+            'head_charset' => 'UTF-8',
+            'text_charset' => 'UTF-8',
+            'html_charset' => 'UTF-8',
+        ]);
         $headers = [
             'From'       => $from,
             'To'         => $to,

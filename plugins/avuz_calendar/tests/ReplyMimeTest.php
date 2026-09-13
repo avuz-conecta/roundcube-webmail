@@ -25,6 +25,18 @@ class ReplyMimeTest extends TestCase {
         $this->assertStringContainsString('METHOD:REPLY', $message);
     }
 
+    public function testEncodesUtf8SubjectAndBody(): void {
+        $ics = "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n";
+        $mime = avuz_reply_mime::build_reply_mime($ics, 'user@empresa.com', 'org@example.com', 'Aceito: Reunião Comercial', 'user@empresa.com — Aceito: Reunião Comercial');
+        $message = $mime->getMessage();
+        $headers = $mime->txtHeaders();
+        // Subject must be RFC 2047 UTF-8 encoded, not raw ISO-8859-1 mojibake.
+        $this->assertMatchesRegularExpression('/Subject:\s*=\?UTF-8\?/i', $headers);
+        $this->assertStringNotContainsString('ReuniÃ£o', $headers);
+        // The text/plain part must declare UTF-8.
+        $this->assertMatchesRegularExpression('/text\/plain;\s*charset=UTF-8/i', $message);
+    }
+
     public function testMultipartAlternativeWhenTextProvided(): void {
         $ics = "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n";
         $mime = avuz_reply_mime::build_reply_mime($ics, 'user@empresa.com', 'organizer@example.com', 'Accepted: teste', 'user accepted: teste');
