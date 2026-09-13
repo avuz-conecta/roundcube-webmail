@@ -45,7 +45,9 @@ domains. NC base URL = `https://<NEXTCLOUD_TRUSTED_DOMAIN>`.
 
 | Customer mail domain(s) | NC instance (stack) | NC base URL |
 |---|---|---|
-| grupovidalar.com.br, raiven.com.br, austerengenharia.com.br | grupo-vidalar (60, app2) | https://vidalar.avuz.app |
+| grupovidalar.com.br | grupo-vidalar (60, app2) | https://vidalar.avuz.app |
+| austerengenharia.com.br | grupo-vidalar (60, app2 — branded host) | https://auster.avuz.app |
+| raiven.com.br | grupo-vidalar (60, app2 — branded host) | https://raiven.avuz.app |
 | progetticonstrutora.com.br | progetti (92) | https://progetti.avuz.app |
 | digrepal.com.br | digrepal (51) | https://digrepal.avuz.app |
 | consulttagro.com | consultt-agro (57) | https://consulttagro.avuz.app |
@@ -58,8 +60,13 @@ domains. NC base URL = `https://<NEXTCLOUD_TRUSTED_DOMAIN>`.
 16 domains → 9 instances. The `AVUZ_NC_INSTANCES` JSON value:
 
 ```json
-{"grupovidalar.com.br":"https://vidalar.avuz.app","raiven.com.br":"https://vidalar.avuz.app","austerengenharia.com.br":"https://vidalar.avuz.app","progetticonstrutora.com.br":"https://progetti.avuz.app","digrepal.com.br":"https://digrepal.avuz.app","consulttagro.com":"https://consulttagro.avuz.app","ecoambiental-consultoria.com.br":"https://eco-ambiental.avuz.app","ecoepi.com.br":"https://eco-ambiental.avuz.app","cfmadvocacia.com":"https://cfm.avuz.app","ctmadvocacia.com":"https://cfm.avuz.app","arkua.com.br":"https://arkua.avuz.app","dellannopassofundo.com.br":"https://ramires.avuz.app","agfeleuterio.com.br":"https://ramires.avuz.app","tiagoguerreiro.com.br":"https://ramires.avuz.app","eggies.com.br":"https://ramires.avuz.app","comprev.seg.br":"https://comprev.avuz.app"}
+{"grupovidalar.com.br":"https://vidalar.avuz.app","austerengenharia.com.br":"https://auster.avuz.app","raiven.com.br":"https://raiven.avuz.app","progetticonstrutora.com.br":"https://progetti.avuz.app","digrepal.com.br":"https://digrepal.avuz.app","consulttagro.com":"https://consulttagro.avuz.app","ecoambiental-consultoria.com.br":"https://eco-ambiental.avuz.app","ecoepi.com.br":"https://eco-ambiental.avuz.app","cfmadvocacia.com":"https://cfm.avuz.app","ctmadvocacia.com":"https://cfm.avuz.app","arkua.com.br":"https://arkua.avuz.app","dellannopassofundo.com.br":"https://ramires.avuz.app","agfeleuterio.com.br":"https://ramires.avuz.app","tiagoguerreiro.com.br":"https://ramires.avuz.app","eggies.com.br":"https://ramires.avuz.app","comprev.seg.br":"https://comprev.avuz.app"}
 ```
+
+Note: grupovidalar/auster/raiven are one NC instance (grupo-vidalar, stack 60)
+reached via three branded `*.avuz.app` hosts — each mail domain maps to its own
+branded host (all verified HTTP 200, NC 33.0.8.2). The calendar POST works to any
+of them since they hit the same container + user DB.
 
 **Not mapped (no org domain — every user is on a public provider):** `endopasso`
 (gmail/terra), `cartorio-veranopolis` (yahoo). The M1 gate means their users see
