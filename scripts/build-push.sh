@@ -17,6 +17,10 @@ BROKER_IMAGE_NAME="avuz-password-broker"
 SIDECAR_IMAGE_NAME="avuz-imapproxy-sidecar"
 VERSION=${1:-latest}
 ENV=${2:-local}
+# SKIP_LATEST_PUSH=1 pushes only the version tag. Prod stacks run :latest, so
+# pushing it stages a deploy: the next recreate/redeploy would pull it. Use this
+# to build ahead of a go-ahead; move :latest later with `docker push <image>:latest`.
+SKIP_LATEST_PUSH=${SKIP_LATEST_PUSH:-0}
 
 case $ENV in
   local)
@@ -78,7 +82,7 @@ echo "✓ Build completed: ${IMAGE_TAG_LATEST}"
 
 if [ "$PUSH" = true ]; then
   docker push ${IMAGE_TAG}
-  docker push ${IMAGE_TAG_LATEST}
+  [ "$SKIP_LATEST_PUSH" = 1 ] || docker push ${IMAGE_TAG_LATEST}
   echo "✓ Pushed ${IMAGE_TAG_LATEST}"
 fi
 
@@ -100,7 +104,7 @@ echo "✓ Build completed: ${BROKER_IMAGE_TAG_LATEST}"
 
 if [ "$PUSH" = true ]; then
   docker push ${BROKER_IMAGE_TAG}
-  docker push ${BROKER_IMAGE_TAG_LATEST}
+  [ "$SKIP_LATEST_PUSH" = 1 ] || docker push ${BROKER_IMAGE_TAG_LATEST}
   echo "✓ Pushed ${BROKER_IMAGE_TAG_LATEST}"
 fi
 
@@ -122,6 +126,6 @@ echo "✓ Build completed: ${SIDECAR_IMAGE_TAG_LATEST}"
 
 if [ "$PUSH" = true ]; then
   docker push ${SIDECAR_IMAGE_TAG}
-  docker push ${SIDECAR_IMAGE_TAG_LATEST}
+  [ "$SKIP_LATEST_PUSH" = 1 ] || docker push ${SIDECAR_IMAGE_TAG_LATEST}
   echo "✓ Pushed ${SIDECAR_IMAGE_TAG_LATEST}"
 fi
