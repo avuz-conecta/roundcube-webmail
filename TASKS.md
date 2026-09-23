@@ -20,18 +20,18 @@ Spec: `docs/superpowers/specs/2026-09-23-login-password-toggle-and-receipt-clean
 - [x] Full Plugins suite: 228 tests, only the 2 pre-existing failures below
 
 ## Ship (needs Patrick)
-- [ ] Commit (not done — waiting for go-ahead)
-- [ ] Build + deploy staging (`./scripts/build-push.sh <ver> staging`)
+- [x] Commit (5952a4272, 1dfbf0291, b51c93227)
+- [x] Build + deploy staging (stack avuz-mail-roundcube-2, image :staging, healthz 200, plugin + eye script served)
 - [ ] Staging check 1: login page shows eye, toggles, login still works
 - [ ] Staging check 2: send a mail with read receipt to a staging user, open it, send receipt; within ~2–5 min it leaves Enviadas and shows in Lixeira; `avuz_receipt_cleanup` log line appears
-- [ ] Staging check 3: Outlook/phone-sent receipt also swept on next webmail session
+- [ ] Staging check 3: Outlook-sent receipt also swept on next webmail session
 - [ ] Prod build/deploy (version tag + go-ahead)
 
 ## Found along the way
 - [ ] Pre-existing test failures (not ours): `Enigma_EnigmaEngine::test_password_handler`, `Password_Plugin::test_hash_password` (PHP 8.5 bcrypt cost 12 vs expected 10)
 - [x] `customizations.json` had no `avuz_calendar` entry and didn't mention `markasjunk` — added
 - [x] `avuz_calendar` tests (26) existed but weren't in `tests/phpunit.xml` — wired, all pass
-- [ ] Unknown whether Zoho exposes an Outbox folder over IMAP; config sweeps `Outbox`/`Caixa de saída` if present (read-only prod folder survey would confirm)
-- [ ] Zoho webmail's own read receipts: format unverified; swept only if RFC 8098 `multipart/report`
+- [x] Outbox: Patrick's folder list (Configurações → Pastas) shows only Caixa de entrada, Rascunhos, Enviados, Spam, Lixeira — Zoho exposes no Outbox over IMAP. The client's "caixa de saída" = Enviados (covered). Extra-folder config kept as zero-cost insurance
+- [x] Zoho webmail's own read receipts: out of scope (Patrick: only Outlook + Roundcube matter; both send RFC 8098)
 - [ ] Cleanup only runs while webmail is open. True server-side cron needs stored IMAP creds or Zoho mailbox API — separate decision
 - [ ] Large Sent backlog: 200 msgs/pass on each ~2 min refresh (e.g. 20k msgs ≈ 3.3 h of open webmail)
