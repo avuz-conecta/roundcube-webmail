@@ -56,6 +56,11 @@
       <file>./../plugins/avuz_prefetch/tests/prefetch_cache_test.php</file>
       <file>./../plugins/avuz_body_cache/tests/body_cache_test.php</file>
       <file>./../plugins/avuz_poll_scope/tests/poll_folders_test.php</file>
+      <file>./../plugins/avuz_receipt_cleanup/tests/read_receipt_test.php</file>
+      <file>./../plugins/avuz_receipt_cleanup/tests/receipt_sweeper_test.php</file>
+      <file>./../plugins/avuz_receipt_cleanup/tests/cleanup_plan_test.php</file>
+      <file>./../plugins/avuz_receipt_cleanup/tests/imap_receipt_mailbox_test.php</file>
+      <directory suffix=".php">./../plugins/avuz_calendar/tests</directory>
       <file>./../plugins/password/tests/ZohoBroker.php</file>
       <file>./../plugins/new_user_dialog/tests/NewUserDialog.php</file>
       <file>./../plugins/new_user_identity/tests/NewUserIdentity.php</file>
