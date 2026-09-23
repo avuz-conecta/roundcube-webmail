@@ -25,7 +25,10 @@ Spec: `docs/superpowers/specs/2026-09-23-login-password-toggle-and-receipt-clean
 - [ ] Staging check 1: login page shows eye, toggles, login still works
 - [ ] Staging check 2: send a mail with read receipt to a staging user, open it, send receipt; within ~2–5 min it leaves Enviadas and shows in Lixeira; `avuz_receipt_cleanup` log line appears
 - [ ] Staging check 3: Outlook-sent receipt also swept on next webmail session
-- [ ] Prod build/deploy (version tag + go-ahead)
+- [x] Staging checks passed (Patrick, 2026-09-23)
+- [x] Prod images built + pushed as `:1.8.0` only (roundcube, password-broker, imapproxy-sidecar); `:latest` untouched; git tag `avuz-1.8.0` (local)
+- [ ] **GO (waits for Patrick):** move `:latest` → 1.8.0 for the 3 images, redeploy prod stack 36 (endpoint 5), check healthz + login page + error log
+- Rollback: re-point `:latest` to `1.7.0` and redeploy stack 36
 
 ## Found along the way
 - [ ] Pre-existing test failures (not ours): `Enigma_EnigmaEngine::test_password_handler`, `Password_Plugin::test_hash_password` (PHP 8.5 bcrypt cost 12 vs expected 10)
