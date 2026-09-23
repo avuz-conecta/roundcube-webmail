@@ -23,6 +23,10 @@ class nextcloud_sso extends rcube_plugin
     {
         $this->include_stylesheet('avuz-overrides.css');
         $this->include_script('avuz-overrides.js');
+        if (rcmail::get_instance()->task === 'login') {
+            $this->add_texts('localization/', ['showpassword', 'hidepassword']);
+            $this->include_script('avuz-password-toggle.js');
+        }
         $this->add_hook('startup', [$this, 'handleStartup']);
         $this->add_hook('smtp_connect', [$this, 'applySmtp']);
         $this->add_hook('ready', [$this, 'applySentPolicy']);

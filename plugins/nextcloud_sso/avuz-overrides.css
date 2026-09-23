@@ -482,6 +482,46 @@ input[type="radio"]:checked + label::before {
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08) !important;
 }
 
+/* Show/hide password eye (avuz-password-toggle.js) */
+.task-login #login-form .avuz-password-field {
+  position: relative !important;
+}
+
+.task-login #login-form .avuz-password-field #rcmloginpwd {
+  padding-right: 48px !important;
+}
+
+.task-login #rcmloginpwd::-ms-reveal {
+  display: none;
+}
+
+.task-login .avuz-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #555;
+  cursor: pointer;
+}
+
+.task-login .avuz-password-toggle:hover {
+  color: #000;
+}
+
+.task-login .avuz-password-toggle:focus-visible {
+  outline: 2px solid #2bb5e3;
+  outline-offset: 1px;
+}
+
 /* Black submit pill (overrides the lime accent for login) */
 .task-login #rcmloginsubmit {
   background-color: #000 !important;
