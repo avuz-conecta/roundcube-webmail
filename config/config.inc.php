@@ -148,7 +148,14 @@ $config['plugins'] = [
     'avuz_body_cache',   // AVUZ: browser IndexedDB body cache (inert unless AVUZ_BODY_CACHE=1)
     'markasjunk',        // AVUZ: Junk / Not-Junk buttons — pure IMAP folder move (Zoho has no learning API)
     'avuz_calendar',
+    'avuz_receipt_cleanup', // AVUZ: moves sent read receipts out of Sent/Outbox into Trash
 ];
+
+// -- Read-receipt cleanup (avuz_receipt_cleanup plugin) --
+// Zoho saves every SMTP submission to Sent, so each read receipt a user sends
+// (from any client) lands there. The plugin sweeps sent_mbox plus these outbox
+// folders when they exist; missing names are skipped. UTF-8 names.
+$config['avuz_receipt_cleanup_extra_folders'] = ['Outbox', 'Caixa de saída'];
 
 // -- Mark as Junk / Not Junk (markasjunk plugin) --
 // Zoho exposes NO spam-learning API (same reason managesieve is gone), so we run
