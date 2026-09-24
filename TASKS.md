@@ -27,10 +27,13 @@ Spec: `docs/superpowers/specs/2026-09-23-login-password-toggle-and-receipt-clean
 - [ ] Staging check 3: Outlook-sent receipt also swept on next webmail session
 - [x] Staging checks passed (Patrick, 2026-09-23)
 - [x] Prod images built + pushed as `:1.8.0` only (roundcube, password-broker, imapproxy-sidecar); `:latest` untouched; git tag `avuz-1.8.0` (local)
-- [ ] **GO (waits for Patrick):** move `:latest` → 1.8.0 for the 3 images, redeploy prod stack 36 (endpoint 5), check healthz + login page + error log
-- Rollback: re-point `:latest` to `1.7.0` and redeploy stack 36
+- [x] GO (Patrick, 2026-09-24 02:19 UTC): `:latest` → 1.8.0 for the 3 images; prod stack 36 (endpoint 5) roundcube image switched from pinned `:1.7.0` to `:latest` (Patrick's call — he is the only one who builds latest) and redeployed
+- [x] Prod verified: roundcube on digest `5278c99…` (= 1.8.0), healthy; plugin loaded; login page serves eye + labels; flags unchanged (PIPELINED=0, BODY_CACHE unset, 17 NC instances); first real sweeps logged (2 dellannopassofundo users, 1 + 3 receipts → Trash)
+- Rollback: `docker buildx imagetools create -t registry.avuz.app/admin/avuz-roundcube:latest registry.avuz.app/admin/avuz-roundcube:1.7.0` (same for broker/sidecar if needed), then redeploy stack 36
 
 ## Found along the way
+- [x] Prod stack 36 pinned roundcube to `:1.7.0` while broker/imapproxy ran `:latest` — first redeploy only recreated broker/imapproxy/postgres/redis. Now all on `:latest`.
+- [x] Stack 65 (endpoint 9) is orphaned — endpoint 9 no longer exists in Portainer
 - [ ] Pre-existing test failures (not ours): `Enigma_EnigmaEngine::test_password_handler`, `Password_Plugin::test_hash_password` (PHP 8.5 bcrypt cost 12 vs expected 10)
 - [x] `customizations.json` had no `avuz_calendar` entry and didn't mention `markasjunk` — added
 - [x] `avuz_calendar` tests (26) existed but weren't in `tests/phpunit.xml` — wired, all pass
