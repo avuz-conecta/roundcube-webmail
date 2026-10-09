@@ -13,12 +13,13 @@ use Sabre\VObject\Reader;
  *      "accept?" prompt.
  *   2. ORGANIZER carries SCHEDULE-AGENT=CLIENT (RFC 6638) — tells the CalDAV
  *      server the client owns scheduling, so the server sends no iMip reply.
- * METHOD is stripped (a stored CalDAV object must not carry one).
+ * METHOD:REQUEST is KEPT: AvuzConecta now imports via IManager::handleIMip,
+ * which needs the iTip method to upsert the event (SEQUENCE downgrades are
+ * gated by the importer, not by handleIMip — the broker overwrites regardless).
  */
 class avuz_calendar_event {
     public static function for_calendar(string $request_ics, string $email, string $partstat): string {
         $vcal = Reader::read($request_ics);
-        unset($vcal->METHOD);
         if (!isset($vcal->VEVENT)) { return $vcal->serialize(); }
         $event = $vcal->VEVENT;
 

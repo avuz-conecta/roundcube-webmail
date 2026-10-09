@@ -13,9 +13,9 @@ class CalendarEventTest extends TestCase {
             . "END:VEVENT\r\nEND:VCALENDAR\r\n";
     }
 
-    public function testStripsMethod(): void {
+    public function testKeepsMethodRequestForImipUpsert(): void {
         $out = avuz_calendar_event::for_calendar($this->request(), 'patrick@avuz.cloud', 'ACCEPTED');
-        $this->assertStringNotContainsString('METHOD:', $out);
+        $this->assertStringContainsString('METHOD:REQUEST', $out);
     }
 
     public function testSetsChosenPartstatOnUserAttendee(): void {

@@ -146,10 +146,24 @@ class avuz_calendar extends rcube_plugin
                 $secret = (string) getenv('ROUNDCUBE_SSO_SECRET');
                 $env = avuz_nc_client::sign($event_ics, $me, $secret, time());
                 $res = avuz_nc_client::post($base, $event_ics, $inv['uid'], $env);
-                $messages[] = $res['ok'] ? $this->gettext('added') : $this->gettext('add_failed');
+                $messages[] = $this->calendar_result_label($res);
             }
         }
         $this->reply_done($rcmail, implode(' · ', $messages));
+    }
+
+    /**
+     * Turn the import endpoint's JSON {status} into a user-facing label. The
+     * server now distinguishes created/updated/unchanged, so a re-sent invite
+     * that updated the event no longer claims a fresh "Added". A missing status
+     * (older server) falls back to the created label.
+     */
+    private function calendar_result_label(array $res): string {
+        if (!$res['ok']) { return $this->gettext('add_failed'); }
+        $decoded = json_decode($res['body'], true);
+        $status = is_array($decoded) ? (string) ($decoded['status'] ?? '') : '';
+        $labels = ['created' => 'added', 'updated' => 'updated', 'unchanged' => 'unchanged'];
+        return $this->gettext($labels[$status] ?? 'added');
     }
 
     private function send_reply($rcmail, string $organizer, string $me, string $request_ics, string $partstat, string $summary, string $in_reply_to = ''): bool {
