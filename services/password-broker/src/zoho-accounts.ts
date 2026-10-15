@@ -4,7 +4,6 @@ const BASE = "https://mail.zoho.com/api/organization";
 const PAGE_SIZE = 200;
 const ZOHO_SUCCESS_CODE = 200;
 const REPLY_TEXT_LIMIT = 200;
-const SIGN_OUT_OTHER_SESSIONS = true;
 
 const authHeaders = async (deps: AccountsDeps): Promise<Record<string, string>> => ({
   Authorization: `Zoho-oauthtoken ${await deps.getToken()}`,
@@ -95,19 +94,14 @@ export const findAccountByEmail = async (deps: AccountsDeps, email: string): Pro
 
 // https://www.zoho.com/mail/help/api/put-reset-user-password.html
 // The doc shows {zuid} in the path. Prod resets for every existing tenant work
-// with {accountId} in the path plus zuid in the body, so that is what we send.
+// with {accountId} in the path and the prod broker 1.8.0 body, so that is what we send.
+// With oneTimePassword and resetAuthToken added, Zoho replied EXTRA_KEY_FOUND_IN_JSON.
 export const resetZohoPassword = async (deps: AccountsDeps, account: ZohoAccount, newPass: string): Promise<ZohoReply> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const response = await fetchImpl(`${BASE}/${deps.zoid}/accounts/${account.accountId}`, {
     method: "PUT",
     headers: await authHeaders(deps),
-    body: JSON.stringify({
-      zuid: account.zuid,
-      password: newPass,
-      mode: "resetPassword",
-      oneTimePassword: false,
-      resetAuthToken: SIGN_OUT_OTHER_SESSIONS,
-    }),
+    body: JSON.stringify({ password: newPass, mode: "resetPassword", zuid: account.zuid }),
   });
 
   const reply = await readZohoReply(response);

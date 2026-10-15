@@ -92,31 +92,26 @@ describe("zoho accounts", () => {
         expect(init?.method).toBe("PUT");
       });
 
-      test("sends zuid, a permanent password and signs out other sessions", async () => {
+      test("sends the prod broker 1.8.0 body: password, mode, zuid and nothing else", async () => {
         const { fetchImpl, run } = resetWith(zohoJson({ status: { code: 200, description: "success" } }));
         await run();
         const [, init] = fetchImpl.mock.calls[0] ?? [];
-        expect(JSON.parse(String(init?.body))).toEqual({
-          zuid: 928684132,
-          password: NEW_PASS,
-          mode: "resetPassword",
-          oneTimePassword: false,
-          resetAuthToken: true,
-        });
+        expect(String(init?.body)).toBe(`{"password":"${NEW_PASS}","mode":"resetPassword","zuid":928684132}`);
       });
     });
 
-    // Fake ids. The three prod domains share one Zoho org entry and set no reset flag.
+    // Fake ids. The three prod domains share one Zoho org entry; avuz.cloud is its own org.
     describe.each([
-      { domain: "grupovidalar.com.br", zoid: "700100", accountId: "4100000000000001001", zuid: 810001 },
-      { domain: "austerengenharia.com.br", zoid: "700100", accountId: "4100000000000002002", zuid: 810002 },
-      { domain: "raiven.com.br", zoid: "700100", accountId: "4100000000000003003", zuid: 810003 },
-    ])("prod tenant $domain", ({ zoid, accountId, zuid }) => {
+      { domain: "grupovidalar.com.br", zoid: "700100", accountId: "4100000000000001001", zuid: 810001, role: "member" },
+      { domain: "austerengenharia.com.br", zoid: "700100", accountId: "4100000000000002002", zuid: 810002, role: "member" },
+      { domain: "raiven.com.br", zoid: "700100", accountId: "4100000000000003003", zuid: 810003, role: "member" },
+      { domain: "avuz.cloud", zoid: "700200", accountId: "4200000000000008002", zuid: 820001, role: "admin" },
+    ])("tenant $domain", ({ zoid, accountId, zuid, role }) => {
       const tenantReset = async () => {
         const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => zohoJson({ status: { code: 200, description: "success" } }));
-        await resetZohoPassword({ zoid, getToken: async () => TOKEN, fetchImpl }, { accountId, zuid, role: "member", primary: true }, NEW_PASS);
+        await resetZohoPassword({ zoid, getToken: async () => TOKEN, fetchImpl }, { accountId, zuid, role, primary: true }, NEW_PASS);
         const [url, init] = fetchImpl.mock.calls[0] ?? [];
-        return { url: String(url), body: JSON.parse(String(init?.body)) };
+        return { url: String(url), body: String(init?.body) };
       };
 
       test("PUTs to /accounts/{accountId}", async () => {
@@ -124,9 +119,10 @@ describe("zoho accounts", () => {
         expect(url).toBe(`https://mail.zoho.com/api/organization/${zoid}/accounts/${accountId}`);
       });
 
-      test("sends zuid, a permanent password and signs out other sessions", async () => {
+      test("sends the prod broker 1.8.0 body with keys password, mode, zuid in that order", async () => {
         const { body } = await tenantReset();
-        expect(body).toEqual({ zuid, password: NEW_PASS, mode: "resetPassword", oneTimePassword: false, resetAuthToken: true });
+        expect(body).toBe(`{"password":"${NEW_PASS}","mode":"resetPassword","zuid":${zuid}}`);
+        expect(Object.keys(JSON.parse(body))).toEqual(["password", "mode", "zuid"]);
       });
     });
 
@@ -149,6 +145,13 @@ describe("zoho accounts", () => {
         const { run } = resetWith(zohoJson(body));
         const error = await rejection(run);
         expect(error.reply).toEqual({ httpStatus: 200, zohoCode: 400, description: "Invalid Input", errorCode: "INVALID_INPUT", moreInfo: "zuid is null" });
+      });
+
+      test("keeps Zoho's errorCode and moreInfo from a 404 EXTRA_KEY_FOUND_IN_JSON reply", async () => {
+        const body = { status: { code: 404, description: "Invalid Input" }, data: { errorCode: "EXTRA_KEY_FOUND_IN_JSON", moreInfo: "fake-more-info" } };
+        const { run } = resetWith(zohoJson(body, 404));
+        const error = await rejection(run);
+        expect(error.reply).toEqual({ httpStatus: 404, zohoCode: 404, description: "Invalid Input", errorCode: "EXTRA_KEY_FOUND_IN_JSON", moreInfo: "fake-more-info" });
       });
 
       test("throws when the body is not JSON", async () => {

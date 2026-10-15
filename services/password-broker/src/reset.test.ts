@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from "vitest";
 import { createResetPassword, type ResetDeps } from "./reset.js";
-import { ZohoResetError, type ZohoReply } from "./zoho-accounts.js";
+import { resetZohoPassword, ZohoResetError, type ZohoAccount, type ZohoReply } from "./zoho-accounts.js";
 import type { ZohoOrg } from "./config.js";
 
 const CURRENT_PASS = "Curr3nt-do-not-leak";
 const NEW_PASS = "N3w-Pass-do-not-leak";
 const CLIENT_SECRET = "client-secret-do-not-leak";
 const REFRESH_TOKEN = "refresh-token-do-not-leak";
+const ACCESS_TOKEN = "access-token-do-not-leak";
 
 const org: ZohoOrg = { clientId: "i", clientSecret: CLIENT_SECRET, refreshToken: REFRESH_TOKEN, zoid: "1" };
 const input = { email: "a@x.com", currentPass: CURRENT_PASS, newPass: NEW_PASS };
@@ -166,6 +167,44 @@ describe("reset flow", () => {
       const { run } = createDeps({ verify: passwordsAccepted([]) });
       await run(input);
       expect(lastLog()).toMatchObject({ status: 403, outcome: "current password incorrect" });
+    });
+
+    describe("when Zoho replies 404 EXTRA_KEY_FOUND_IN_JSON", () => {
+      const extraKeyReply = {
+        status: { code: 404, description: "Invalid Input" },
+        data: { errorCode: "EXTRA_KEY_FOUND_IN_JSON", moreInfo: "fake-more-info" },
+        echo: `${NEW_PASS} ${ACCESS_TOKEN}`,
+      };
+      const zohoReset = (fetchImpl: typeof fetch) => (resetOrg: ZohoOrg, account: ZohoAccount, newPass: string) =>
+        resetZohoPassword({ zoid: resetOrg.zoid, getToken: async () => ACCESS_TOKEN, fetchImpl }, account, newPass);
+      const runExtraKeyReset = async () => {
+        const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(extraKeyReply), { status: 404 }));
+        const { run } = createDeps({ findAccount: vi.fn(async () => ({ accountId: "7", zuid: 77, role: "admin", primary: true })), reset: zohoReset(fetchImpl) });
+        return run(input);
+      };
+
+      test("returns 502 zoho rejected reset", async () => {
+        expect(await runExtraKeyReset()).toEqual({ status: 502, body: { ok: false, error: "zoho rejected reset" } });
+      });
+
+      test("names the errorCode and moreInfo in the logged line", async () => {
+        await runExtraKeyReset();
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(loggedLines().at(-1)).toContain('"errorCode":"EXTRA_KEY_FOUND_IN_JSON"');
+        expect(lastLog()).toMatchObject({
+          role: "admin",
+          primary: true,
+          zoho: { httpStatus: 404, zohoCode: 404, description: "Invalid Input", errorCode: "EXTRA_KEY_FOUND_IN_JSON", moreInfo: "fake-more-info" },
+          status: 502,
+          outcome: "zoho rejected reset",
+        });
+      });
+
+      test("logs no password or token", async () => {
+        await runExtraKeyReset();
+        const output = loggedLines().join("\n");
+        for (const secret of [CURRENT_PASS, NEW_PASS, ACCESS_TOKEN, CLIENT_SECRET, REFRESH_TOKEN]) expect(output).not.toContain(secret);
+      });
     });
 
     test("never logs passwords or tenant secrets, even when Zoho echoes them", async () => {
