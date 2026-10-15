@@ -35,7 +35,11 @@ prod_pattern+='|build-push\.(sh)?[[:space:]]+[^;&|]*[[:space:]]prod([[:space:]]|
 # are allowed below.
 prod_pattern+='|docker[[:space:]]+push[[:space:]]+[^;&|]*(avuz-roundcube|avuz-imapproxy|avuz-password-broker)'
 if printf '%s' "$cmd" | grep -qE "$prod_pattern"; then
-  emit deny "Production action (prod env/endpoint, prod image push). Blocked for agents - run prod deploys yourself, outside the agent."
+  # Opt-in for an approved headless prod release session (approved by Patrick 2026-10-10).
+  if [ "${AVUZ_PROD_RELEASE:-0}" = "1" ]; then
+    emit allow "Approved prod release session (AVUZ_PROD_RELEASE=1)."
+  fi
+  emit ask "Production action (prod env/endpoint, prod image push). Approve only if you intend this to hit the live customer's prod."
 fi
 
 # ---- Always prompts, even amid the allowed dev commands below. ----
