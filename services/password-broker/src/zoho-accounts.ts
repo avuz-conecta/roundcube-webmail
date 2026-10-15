@@ -11,8 +11,9 @@ const authHeaders = async (deps: AccountsDeps): Promise<Record<string, string>> 
   "Content-Type": "application/json",
 });
 
-// accountId is kept for logging; the reset itself is addressed by zuid.
-export type ZohoAccount = { accountId: string; zuid: number };
+// Reset needs accountId in the path AND zuid in the body. role and primary are
+// logged only: they tell an admin/owner account or an alias match apart.
+export type ZohoAccount = { accountId: string; zuid: number; role: string | null; primary: boolean | null };
 
 // Whitelisted fields of a Zoho response. Never carries the raw body.
 export type ZohoReply = {
@@ -74,22 +75,30 @@ export const findAccountByEmail = async (deps: AccountsDeps, email: string): Pro
 
     // emailAddress is an array of { mailId, isPrimary, ... }; match any mailId.
     const json = (await response.json()) as {
-      data?: Array<{ accountId: string; zuid: number; emailAddress?: Array<{ mailId: string }> }>;
+      data?: Array<{ accountId: string; zuid: number; role?: unknown; emailAddress?: Array<{ mailId: string; isPrimary?: unknown }> }>;
     };
     const users = json.data ?? [];
     if (users.length === 0) return null;
 
-    const match = users.find((user) =>
-      (user.emailAddress ?? []).some((entry) => entry.mailId.toLowerCase() === target)
-    );
-    if (match) return { accountId: match.accountId, zuid: match.zuid };
+    for (const user of users) {
+      const matched = (user.emailAddress ?? []).find((entry) => entry.mailId.toLowerCase() === target);
+      if (!matched) continue;
+      return {
+        accountId: user.accountId,
+        zuid: user.zuid,
+        role: shortText(user.role),
+        primary: typeof matched.isPrimary === "boolean" ? matched.isPrimary : null,
+      };
+    }
   }
 };
 
 // https://www.zoho.com/mail/help/api/put-reset-user-password.html
+// The doc shows {zuid} in the path. Prod resets for every existing tenant work
+// with {accountId} in the path plus zuid in the body, so that is what we send.
 export const resetZohoPassword = async (deps: AccountsDeps, account: ZohoAccount, newPass: string): Promise<ZohoReply> => {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const response = await fetchImpl(`${BASE}/${deps.zoid}/accounts/${account.zuid}`, {
+  const response = await fetchImpl(`${BASE}/${deps.zoid}/accounts/${account.accountId}`, {
     method: "PUT",
     headers: await authHeaders(deps),
     body: JSON.stringify({

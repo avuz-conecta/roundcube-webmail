@@ -22,6 +22,8 @@ type ResetLog = {
   zoid: string | null;
   accountId: string | null;
   zuid: number | null;
+  role: string | null;
+  primary: boolean | null;
   zoho: ZohoReply | null;
   zohoMs: number | null;
   confirmAttempts: number;
@@ -72,6 +74,8 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
     zoid: null,
     accountId: null,
     zuid: null,
+    role: null,
+    primary: null,
     zoho: null,
     zohoMs: null,
     confirmAttempts: 0,
@@ -101,6 +105,8 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
     if (account === null) return finish(404, "account not found");
     log.accountId = account.accountId;
     log.zuid = account.zuid;
+    log.role = account.role;
+    log.primary = account.primary;
 
     zohoStartedAt = now();
     log.zoho = await deps.reset(org, account, input.newPass);

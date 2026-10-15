@@ -18,7 +18,7 @@ const createDeps = (overrides: Partial<ResetDeps> = {}) => {
   const deps = {
     resolveOrg: (_email: string): ZohoOrg | null => org,
     verify: passwordsAccepted([CURRENT_PASS, NEW_PASS]),
-    findAccount: vi.fn(async () => ({ accountId: "7", zuid: 77 })),
+    findAccount: vi.fn(async () => ({ accountId: "7", zuid: 77, role: "member", primary: true })),
     reset: vi.fn(async (): Promise<ZohoReply> => success),
     confirmDelaysMs: [10, 20, 40],
     sleep: vi.fn(async (_ms: number) => {}),
@@ -150,6 +150,8 @@ describe("reset flow", () => {
         zoid: "1",
         accountId: "7",
         zuid: 77,
+        role: "member",
+        primary: true,
         zoho: { httpStatus: 200, zohoCode: 200, description: "success" },
         confirmAttempts: 1,
         status: 200,

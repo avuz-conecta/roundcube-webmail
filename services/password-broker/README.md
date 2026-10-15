@@ -40,8 +40,10 @@ Callers map 502 to a connection/server error. No new statuses were added.
 
 Docs: https://www.zoho.com/mail/help/api/put-reset-user-password.html (response codes: https://www.zoho.com/mail/help/api/response-codes.html).
 
+The doc shows `{zuid}` in the path. The broker sends `{accountId}` in the path and `zuid` in the body: that is what works in prod for every existing tenant (grupovidalar.com.br, austerengenharia.com.br, raiven.com.br). Tests pin this URL per prod tenant.
+
 ```http
-PUT https://mail.zoho.com/api/organization/{zoid}/accounts/{zuid}
+PUT https://mail.zoho.com/api/organization/{zoid}/accounts/{accountId}
 Authorization: Zoho-oauthtoken <redacted>
 Content-Type: application/json
 
@@ -63,10 +65,10 @@ The broker treats a password as wrong only when `authenticationFailed === true` 
 Each `/reset` writes exactly one JSON line: `console.log` on 200, `console.error` otherwise.
 
 ```json
-{"event":"broker.reset","email":"user@tenant.com","zoid":"111","accountId":"5834474000000008002","zuid":928684132,"zoho":{"httpStatus":200,"zohoCode":200,"description":"success","errorCode":null,"moreInfo":null},"zohoMs":412,"confirmAttempts":1,"confirmMs":1630,"confirmFailure":null,"failure":null,"status":200,"outcome":"ok","durationMs":3120}
+{"event":"broker.reset","email":"user@tenant.com","zoid":"111","accountId":"5834474000000008002","zuid":928684132,"role":"member","primary":true,"zoho":{"httpStatus":200,"zohoCode":200,"description":"success","errorCode":null,"moreInfo":null},"zohoMs":412,"confirmAttempts":1,"confirmMs":1630,"confirmFailure":null,"failure":null,"status":200,"outcome":"ok","durationMs":3120}
 ```
 
-Logged: email, zoid, accountId, zuid, Zoho HTTP status, whitelisted Zoho fields (`status.code`, `status.description`, `data.errorCode`, `data.moreInfo`, each cut to 200 chars), Zoho/confirm/total durations, confirm attempts and last confirm failure, error message, final status and outcome.
+Logged: email, zoid, accountId, zuid, the matched account's Zoho `role` and whether the email matched its primary address (`primary`; `false` = alias), Zoho HTTP status, whitelisted Zoho fields (`status.code`, `status.description`, `data.errorCode`, `data.moreInfo`, each cut to 200 chars), Zoho/confirm/total durations, confirm attempts and last confirm failure, error message, final status and outcome.
 
 Never logged: passwords (any occurrence is replaced with `<redacted>`), the OAuth access token, refresh token, client secret, the `Authorization` header, `X-Broker-Secret`, request bodies, or raw Zoho response bodies.
 
