@@ -10,9 +10,15 @@ const defaultConnect: ImapConnect = async (opts) => {
   return { logout: () => client.logout() };
 };
 
-const isAuthenticationFailure = (error: unknown): boolean => {
+// imapflow sets authenticationFailed on ANY failed LOGIN/AUTHENTICATE, including a socket
+// closing mid-command (lib/commands/login.js, lib/commands/authenticate.js handleAuthError).
+// Only a tagged server reply sets responseStatus (lib/imap-flow.js, NO/BAD branch) and the
+// [AUTHENTICATIONFAILED] code (tools.getStatusCode). Without those, the server never answered.
+const isServerRejection = (error: unknown): boolean => {
   if (typeof error !== "object" || error === null) return false;
-  return (error as Record<string, unknown>).authenticationFailed === true;
+  const candidate = error as Record<string, unknown>;
+  if (candidate.authenticationFailed !== true) return false;
+  return candidate.responseStatus === "NO" || candidate.serverResponseCode === "AUTHENTICATIONFAILED";
 };
 
 export const verifyImapPassword = async (deps: VerifyDeps, email: string, password: string): Promise<boolean> => {
@@ -22,7 +28,7 @@ export const verifyImapPassword = async (deps: VerifyDeps, email: string, passwo
   try {
     client = await connect({ host: deps.host, port: deps.port, secure: true, auth: { user: email, pass: password } });
   } catch (error) {
-    if (isAuthenticationFailure(error)) return false;
+    if (isServerRejection(error)) return false;
     throw error;
   }
 

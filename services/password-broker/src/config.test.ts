@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadConfig, resolveTenant, shouldForcePasswordChange } from "./config.js";
+import { isTokenOwner, loadConfig, resolveTenant, shouldForcePasswordChange, type ZohoOrg } from "./config.js";
 
 const tenantsJson = '{"Client-A.com":{"clientId":"i","clientSecret":"s","refreshToken":"r","zoid":"111"}}';
 const env = { BROKER_SHARED_SECRET: "x", ZOHO_TENANTS: tenantsJson } as NodeJS.ProcessEnv;
@@ -49,5 +49,41 @@ describe("shouldForcePasswordChange", () => {
   test("never forces a non-tenant domain", () => {
     const { tenants } = loadConfig(multiTenantEnv);
     expect(shouldForcePasswordChange(tenants, "user@stranger.com")).toBe(false);
+  });
+});
+
+describe("tokenOwner", () => {
+  const tokenOwnerEnv = {
+    BROKER_SHARED_SECRET: "x",
+    ZOHO_TENANTS: JSON.stringify({
+      "owned.com": { clientId: "i", clientSecret: "s", refreshToken: "r", zoid: "1", tokenOwner: " Admin@Owned.com " },
+      "unowned.com": { clientId: "i", clientSecret: "s", refreshToken: "r", zoid: "2" },
+    }),
+  } as NodeJS.ProcessEnv;
+  const baseOrg: ZohoOrg = { clientId: "i", clientSecret: "s", refreshToken: "r", zoid: "1" };
+
+  test("parses tokenOwner from ZOHO_TENANTS", () => {
+    const { tenants } = loadConfig(tokenOwnerEnv);
+    expect(resolveTenant(tenants, "user@owned.com")?.tokenOwner).toBe(" Admin@Owned.com ");
+  });
+
+  test("keeps tokenOwner optional", () => {
+    const { tenants } = loadConfig(tokenOwnerEnv);
+    expect(resolveTenant(tenants, "user@unowned.com")?.tokenOwner).toBeUndefined();
+  });
+
+  test("matches the owner trimmed and case-insensitively", () => {
+    const { tenants } = loadConfig(tokenOwnerEnv);
+    const org = resolveTenant(tenants, "admin@owned.com");
+    expect(org && isTokenOwner(org, "  ADMIN@owned.COM ")).toBe(true);
+  });
+
+  test("does not match another account on the same tenant", () => {
+    expect(isTokenOwner({ ...baseOrg, tokenOwner: "admin@owned.com" }, "user@owned.com")).toBe(false);
+  });
+
+  test.each([undefined, "", "   "])("matches nobody when tokenOwner is %j", (tokenOwner) => {
+    expect(isTokenOwner({ ...baseOrg, tokenOwner }, "")).toBe(false);
+    expect(isTokenOwner({ ...baseOrg, tokenOwner }, "   ")).toBe(false);
   });
 });

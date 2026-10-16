@@ -6,6 +6,9 @@ export type ZohoOrg = {
   // Per-tenant toggle for the forced first-login password change.
   // Absent = true (force), for backward compatibility.
   forcePasswordChange?: boolean;
+  // E-mail of the account that owns this tenant's Zoho API client.
+  // Zoho accepts its reset but does not apply it, and revokes the refresh token.
+  tokenOwner?: string;
 };
 
 export type BrokerConfig = {
@@ -47,4 +50,13 @@ export const resolveTenant = (tenants: Map<string, ZohoOrg>, email: string): Zoh
 export const shouldForcePasswordChange = (tenants: Map<string, ZohoOrg>, email: string): boolean => {
   const org = resolveTenant(tenants, email);
   return org !== null && (org.forcePasswordChange ?? true);
+};
+
+const normaliseEmail = (email: string): string => email.trim().toLowerCase();
+
+// Whether this email owns the tenant's Zoho API client. Unset, empty or blank tokenOwner = no owner.
+export const isTokenOwner = (org: ZohoOrg, email: string): boolean => {
+  if (typeof org.tokenOwner !== "string") return false;
+  const owner = normaliseEmail(org.tokenOwner);
+  return owner !== "" && owner === normaliseEmail(email);
 };

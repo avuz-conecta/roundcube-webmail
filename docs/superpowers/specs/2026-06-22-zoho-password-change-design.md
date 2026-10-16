@@ -57,7 +57,7 @@ user logs into avuz conecta and (manually) aligns the same password for SSO.
 
 ## Verified Zoho API
 
-- Reset: `PUT https://mail.zoho.com/api/organization/{zoid}/accounts/{zuid}`
+- Reset: `PUT https://mail.zoho.com/api/organization/{zoid}/accounts/{accountId}` with `zuid` in the body (Zoho's doc shows `{zuid}` in the path; the accountId path is what works in prod)
   - Headers: `Authorization: Zoho-oauthtoken <access>`, `Content-Type: application/json`
   - Body: `{"password": "<new>", "mode": "resetPassword"}`
   - Sets the password to the **exact value provided**.

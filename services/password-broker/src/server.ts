@@ -1,7 +1,7 @@
 import http from "node:http";
 
 export type ResetInput = { email: string; currentPass: string; newPass: string };
-export type ResetResult = { status: 200 | 401 | 403 | 404 | 422 | 502; body: { ok: boolean; error?: string } };
+export type ResetResult = { status: 200 | 401 | 403 | 404 | 409 | 422 | 502; body: { ok: boolean; error?: string; message?: string } };
 export type ServerDeps = {
   sharedSecret: string;
   resetPassword: (input: ResetInput) => Promise<ResetResult>;
