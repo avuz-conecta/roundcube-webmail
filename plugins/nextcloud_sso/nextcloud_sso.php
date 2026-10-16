@@ -209,7 +209,7 @@ class nextcloud_sso extends rcube_plugin
                 . "ov.innerHTML="
                 . "'<div style=\"background:#fff;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.18)\">'"
                 . "+'<h3 style=\"margin:0 0 12px;font-size:1.1rem;color:#2f3a3f\">Autenticação de e-mail necessária</h3>'"
-                . "+'<p style=\"margin:0 0 8px;color:#555;font-size:.9rem\">Sua senha do Conecta não coincide com a senha do e-mail <strong>'+escHtml(email)+'</strong>.</p>'"
+                . "+'<p style=\"margin:0 0 8px;color:#555;font-size:.9rem\">Sua senha do Avuz Conecta não coincide com a senha do e-mail <strong>'+escHtml(email)+'</strong>.</p>'"
                 . "+'<p style=\"margin:0 0 8px;color:#555;font-size:.9rem\">Informe a senha do seu e-mail:</p>'"
                 . "+'<input type=\"password\" id=\"rc-sso-pw\" autocomplete=\"current-password\" placeholder=\"Senha do e-mail\" style=\"width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px;margin:8px 0 16px;font-size:1rem;box-sizing:border-box\" />'"
                 . "+'<p id=\"rc-sso-err\" style=\"display:none;color:#c00;font-size:.85rem;margin:0 0 8px\"></p>'"
