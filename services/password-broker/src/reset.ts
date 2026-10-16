@@ -1,10 +1,15 @@
-import type { ZohoOrg } from "./config.js";
+import { isTokenOwner, type ZohoOrg } from "./config.js";
 import { ZohoResetError, type ZohoAccount, type ZohoReply } from "./zoho-accounts.js";
 import type { ResetInput, ResetResult } from "./server.js";
 
 // Wait before each IMAP confirm attempt. Total sleep stays far below webmail's 30 s broker timeout.
 export const CONFIRM_DELAYS_MS: readonly number[] = [1000, 2000, 4000];
 const REDACTED = "<redacted>";
+export const TOKEN_OWNER_REFUSAL = {
+  error: "token owner reset not allowed",
+  outcome: "blocked_token_owner",
+  message: "A senha desta conta não pode ser alterada por aqui. Altere-a diretamente no painel do e-mail.",
+} as const;
 
 export type ResetDeps = {
   resolveOrg: (email: string) => ZohoOrg | null;
@@ -31,6 +36,8 @@ type ResetLog = {
   confirmFailure: string | null;
   failure: string | null;
 };
+
+type Refusal = { outcome: string; message: string };
 
 type ConfirmOutcome = { confirmed: boolean; attempts: number; failure: string | null };
 
@@ -84,17 +91,20 @@ export const createResetPassword = (deps: ResetDeps): ((input: ResetInput) => Pr
     failure: null,
   };
 
-  const finish = (status: ResetResult["status"], error?: string): ResetResult => {
-    const outcome = error ?? "ok";
+  const finish = (status: ResetResult["status"], error?: string, refusal?: Refusal): ResetResult => {
+    const outcome = refusal?.outcome ?? error ?? "ok";
     const line = JSON.stringify({ ...log, status, outcome, durationMs: now() - startedAt });
     const write = status === 200 ? console.log : console.error;
     write(redact(line, [input.currentPass, input.newPass]));
-    return error === undefined ? { status, body: { ok: true } } : { status, body: { ok: false, error } };
+    if (error === undefined) return { status, body: { ok: true } };
+    if (refusal === undefined) return { status, body: { ok: false, error } };
+    return { status, body: { ok: false, error, message: refusal.message } };
   };
 
   const org = deps.resolveOrg(input.email);
   if (org === null) return finish(422, "unknown tenant domain");
   log.zoid = org.zoid;
+  if (isTokenOwner(org, input.email)) return finish(409, TOKEN_OWNER_REFUSAL.error, TOKEN_OWNER_REFUSAL);
   let zohoStartedAt = startedAt;
 
   try {

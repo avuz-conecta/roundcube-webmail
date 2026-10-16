@@ -9,6 +9,7 @@ Changes a user's Zoho Mail password for Avuz Conecta tenants. Roundcube's `zoho_
 Body: `{ "email": string, "currentPass": string, "newPass": string }` (camelCase).
 
 1. Resolve the tenant from the email domain (`ZOHO_TENANTS`).
+   If the email is the tenant's `tokenOwner`, refuse with 409 here: no IMAP check, no Zoho call.
 2. Check `currentPass` over IMAP.
 3. Find the Zoho account (zuid, accountId) in the tenant's org.
 4. Reset the password through the Zoho Mail Admin API. Zoho must answer HTTP 2xx **and** JSON `status.code === 200`.
@@ -29,12 +30,13 @@ Returns `{ ok: true, tenant: boolean, forcePasswordChange: boolean }`. `forcePas
 | 401 | `unauthorized` | Wrong or missing `X-Broker-Secret` |
 | 403 | `current password incorrect` | IMAP server answered NO to the current password |
 | 404 | `account not found` | No Zoho account with that email in the tenant's org |
+| 409 | `token owner reset not allowed` | Email is the tenant's `tokenOwner`. Body also carries `message` (pt-BR, user-facing) |
 | 422 | `unknown tenant domain` | Domain not in `ZOHO_TENANTS` |
 | 502 | `zoho rejected reset` | Zoho returned non-2xx, an empty/non-JSON body, no `status`, or `status.code` ≠ 200 |
 | 502 | `reset not confirmed` | Zoho said success, but the new password never opened IMAP (rejected or connection error on every attempt). Password state is unknown |
 | 502 | `upstream error` | Anything else: IMAP drop/timeout while checking the current password, token refresh failure, network error, Zoho account lookup failure |
 
-Callers map 502 to a connection/server error. No new statuses were added.
+Callers map 502 to a connection/server error. Roundcube's `zoho_broker` driver maps 409 to its generic error; webmail maps by `error`.
 
 ## Zoho request
 
@@ -82,10 +84,26 @@ Never logged: passwords (any occurrence is replaced with `<redacted>`), the OAut
 | Env | Default | Purpose |
 |-----|---------|---------|
 | `BROKER_SHARED_SECRET` | required | Shared with Roundcube (`avuz_broker_secret`) and webmail |
-| `ZOHO_TENANTS` | required | JSON `{ "<domain>": { clientId, clientSecret, refreshToken, zoid, forcePasswordChange? } }` |
+| `ZOHO_TENANTS` | required | JSON `{ "<domain>": { clientId, clientSecret, refreshToken, zoid, forcePasswordChange?, tokenOwner? } }` |
 | `ZOHO_IMAP_HOST` | `imap.zoho.com` | IMAP host for both password checks |
 | `ZOHO_IMAP_PORT` | `993` | IMAP port (TLS) |
 | `PORT` | `9000` | Listen port |
+
+### `tokenOwner` (optional, per tenant)
+
+E-mail of the account that owns the tenant's Zoho API client (the one that issued `refreshToken`). Zoho answers 200 to a reset of that account but does not apply it, and it revokes the broker's refresh token (seen on avuz.cloud, Oct 15).
+
+When set, `POST /reset` for that email returns before the current-password IMAP check and before any Zoho call:
+
+```http
+HTTP/1.1 409
+{"ok":false,"error":"token owner reset not allowed","message":"A senha desta conta não pode ser alterada por aqui. Altere-a diretamente no painel do e-mail."}
+```
+
+- Match is trimmed and case-insensitive on both sides.
+- Unset, empty or whitespace = no guard; behaviour is unchanged.
+- Logged as one `broker.reset` line with `"status":409,"outcome":"blocked_token_owner"`.
+- Alternative: create the API client from a separate admin account that is never reset.
 
 ## Develop
 

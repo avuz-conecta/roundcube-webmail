@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi, type MockInstance } from "vitest";
 import { createResetPassword, type ResetDeps } from "./reset.js";
-import { resetZohoPassword, ZohoResetError, type ZohoAccount, type ZohoReply } from "./zoho-accounts.js";
+import { findAccountByEmail, resetZohoPassword, ZohoResetError, type ZohoAccount, type ZohoReply } from "./zoho-accounts.js";
 import type { ZohoOrg } from "./config.js";
 
 const CURRENT_PASS = "Curr3nt-do-not-leak";
@@ -47,6 +47,82 @@ afterEach(() => {
 });
 
 describe("reset flow", () => {
+  describe("token owner guard", () => {
+    const OWNER = "patrick@avuz.cloud";
+    const ownerOrg: ZohoOrg = { ...org, tokenOwner: OWNER };
+    const blockedBody = {
+      ok: false,
+      error: "token owner reset not allowed",
+      message: "A senha desta conta não pode ser alterada por aqui. Altere-a diretamente no painel do e-mail.",
+    };
+
+    const createZohoDeps = (tenant: ZohoOrg) => {
+      const getToken = vi.fn(async () => ACCESS_TOKEN);
+      const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response("{}", { status: 500 }));
+      const zoho = { zoid: tenant.zoid, getToken, fetchImpl };
+      const verify = passwordsAccepted([CURRENT_PASS, NEW_PASS]);
+      const { run } = createDeps({
+        resolveOrg: () => tenant,
+        verify,
+        findAccount: (_org, email) => findAccountByEmail(zoho, email),
+        reset: (_org, account, newPass) => resetZohoPassword(zoho, account, newPass),
+      });
+      return { run, getToken, fetchImpl, verify };
+    };
+
+    describe("when the email is the tenant's token owner", () => {
+      test("returns 409 with the fixed error and message", async () => {
+        const { run } = createZohoDeps(ownerOrg);
+        expect(await run({ ...input, email: OWNER })).toEqual({ status: 409, body: blockedBody });
+      });
+
+      test("never calls Zoho, the token getter or IMAP", async () => {
+        const { run, getToken, fetchImpl, verify } = createZohoDeps(ownerOrg);
+        await run({ ...input, email: OWNER });
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(getToken).not.toHaveBeenCalled();
+        expect(verify).not.toHaveBeenCalled();
+      });
+
+      test.each([" Patrick@Avuz.Cloud ", "PATRICK@AVUZ.CLOUD", "\tpatrick@avuz.cloud\n"])("blocks the email variant %j", async (email) => {
+        const { run, fetchImpl } = createZohoDeps(ownerOrg);
+        expect(await run({ ...input, email })).toEqual({ status: 409, body: blockedBody });
+        expect(fetchImpl).not.toHaveBeenCalled();
+      });
+
+      test.each(["  Patrick@Avuz.Cloud  ", "PATRICK@avuz.CLOUD"])("blocks when tokenOwner is configured as %j", async (tokenOwner) => {
+        const { run, verify } = createZohoDeps({ ...org, tokenOwner });
+        expect((await run({ ...input, email: OWNER })).status).toBe(409);
+        expect(verify).not.toHaveBeenCalled();
+      });
+
+      test("logs one blocked_token_owner line with status 409 and no secrets", async () => {
+        const { run } = createZohoDeps(ownerOrg);
+        await run({ ...input, email: OWNER });
+        expect(loggedLines()).toHaveLength(1);
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(lastLog()).toMatchObject({ event: "broker.reset", email: OWNER, zoid: "1", status: 409, outcome: "blocked_token_owner" });
+        const output = loggedLines().join("\n");
+        for (const secret of [CURRENT_PASS, NEW_PASS, ACCESS_TOKEN, CLIENT_SECRET, REFRESH_TOKEN]) expect(output).not.toContain(secret);
+      });
+    });
+
+    describe("when the email is not the token owner", () => {
+      test("resets a non-owner on a tenant with tokenOwner set", async () => {
+        const { deps, run } = createDeps({ resolveOrg: () => ownerOrg });
+        expect(await run(input)).toEqual({ status: 200, body: { ok: true } });
+        expect(deps.reset).toHaveBeenCalledTimes(1);
+      });
+
+      test.each([undefined, "", "   "])("resets the would-be owner when tokenOwner is %j", async (tokenOwner) => {
+        const { deps, run } = createDeps({ resolveOrg: () => ({ ...org, tokenOwner }) });
+        expect(await run({ ...input, email: OWNER })).toEqual({ status: 200, body: { ok: true } });
+        expect(deps.reset).toHaveBeenCalledTimes(1);
+        expect(lastLog()).toMatchObject({ status: 200, outcome: "ok" });
+      });
+    });
+  });
+
   describe("success", () => {
     test("returns 200 when Zoho confirms and the new password opens IMAP", async () => {
       const { run } = createDeps();

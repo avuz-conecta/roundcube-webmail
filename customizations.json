@@ -86,7 +86,8 @@
         "### broker-false-success – Zoho PUT body",
         "Zoho rejects the account password PUT with EXTRA_KEY_FOUND_IN_JSON when the body carries zuid (avuz.cloud admin account); the guard correctly returns 502.",
         "Fix: body reverted to the prod-proven {zuid, password, mode}; oneTimePassword and resetAuthToken removed as the likely extra keys.",
-        "Body now matches prod broker 1.8.0 (tag avuz-1.8.0, b5f6202): {\"password\":<redacted>,\"mode\":\"resetPassword\",\"zuid\":<zuid>}."
+        "Body now matches prod broker 1.8.0 (tag avuz-1.8.0, b5f6202): {\"password\":<redacted>,\"mode\":\"resetPassword\",\"zuid\":<zuid>}.",
+        "Resetting the account that owns the tenant's Zoho API client is accepted by Zoho but not applied, and revokes the broker's token (seen on avuz.cloud patrick@, Oct 15). Mitigation: set tokenOwner so the broker refuses it, or create the API client from a separate admin account that is never reset."
       ]
     },
     {
